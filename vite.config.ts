@@ -8,6 +8,9 @@ export default defineConfig({
     VitePWA({
       registerType: 'autoUpdate',
       includeAssets: ['favicon.svg', 'apple-touch-icon.png'],
+      workbox: {
+        globIgnores: ['**/SalesExpenseChart-*.js'],
+      },
       manifest: {
         name: 'TrueLine Autos',
         short_name: 'TrueLine',
@@ -34,5 +37,25 @@ export default defineConfig({
   preview: {
     host: '0.0.0.0',
     port: 4173,
+  },
+  build: {
+    rolldownOptions: {
+      output: {
+        codeSplitting: {
+          groups: [
+            {
+              name: 'react-vendor',
+              test: /node_modules[\\/](react|react-dom|scheduler)[\\/]/,
+              priority: 10,
+            },
+            {
+              name: 'supabase-vendor',
+              test: /node_modules[\\/]@supabase[\\/]/,
+              priority: 5,
+            },
+          ],
+        },
+      },
+    },
   },
 });

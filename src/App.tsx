@@ -1,8 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Route, Routes, NavLink, useLocation } from 'react-router-dom';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react';
+import { Route, Routes, NavLink, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import type { Session } from '@supabase/supabase-js';
 import {
-  Bell,
   BriefcaseBusiness,
   CarFront,
   CircleDollarSign,
@@ -10,6 +9,7 @@ import {
   HandCoins,
   Home,
   LogOut,
+  Menu,
   PackageSearch,
   ReceiptText,
   Search,
@@ -19,8 +19,11 @@ import {
   TrendingUp,
   UserRoundCheck,
   Users,
+  X,
 } from 'lucide-react';
 import { supabase, supabaseConfigError } from './lib/supabase';
+
+const SalesExpenseChart = lazy(() => import('./components/SalesExpenseChart'));
 
 type NavItem = {
   key: string;
@@ -41,20 +44,41 @@ type Profile = {
   is_active: boolean;
 };
 
-const navItems: NavItem[] = [
-  { key: 'dashboard', label: 'Dashboard', icon: Home, path: '/' },
-  { key: 'inventory', label: 'Inventory', icon: PackageSearch, path: '/inventory' },
-  { key: 'purchases', label: 'Purchase', icon: ShoppingBagIcon, path: '/purchases' },
-  { key: 'sales', label: 'Sales', icon: TrendingUp, path: '/sales' },
-  { key: 'partners', label: 'Partners', icon: Users, path: '/partners' },
-  { key: 'investors', label: 'Investors', icon: UserRoundCheck, path: '/investors' },
-  { key: 'finance', label: 'Finance', icon: CircleDollarSign, path: '/finance' },
-  { key: 'profit', label: 'Profit', icon: HandCoins, path: '/profit' },
-  { key: 'expenses', label: 'Expenses', icon: ReceiptText, path: '/expenses' },
-  { key: 'reports', label: 'Reports', icon: FileText, path: '/reports' },
-  { key: 'ai', label: 'AI Insights', icon: Sparkles, path: '/ai' },
-  { key: 'settings', label: 'Settings', icon: Settings, path: '/settings' },
+const navSections: { label: string; items: NavItem[] }[] = [
+  { label: 'Overview', items: [{ key: 'dashboard', label: 'Dashboard', icon: Home, path: '/' }] },
+  {
+    label: 'Showroom',
+    items: [
+      { key: 'inventory', label: 'Inventory', icon: PackageSearch, path: '/inventory' },
+      { key: 'purchases', label: 'Purchase', icon: ShoppingBagIcon, path: '/purchases' },
+      { key: 'sales', label: 'Sales', icon: TrendingUp, path: '/sales' },
+    ],
+  },
+  {
+    label: 'People',
+    items: [
+      { key: 'partners', label: 'Partners', icon: Users, path: '/partners' },
+      { key: 'investors', label: 'Investors', icon: UserRoundCheck, path: '/investors' },
+    ],
+  },
+  {
+    label: 'Finance',
+    items: [
+      { key: 'finance', label: 'Finance', icon: CircleDollarSign, path: '/finance' },
+      { key: 'profit', label: 'Profit', icon: HandCoins, path: '/profit' },
+      { key: 'expenses', label: 'Expenses', icon: ReceiptText, path: '/expenses' },
+    ],
+  },
+  {
+    label: 'Insights',
+    items: [
+      { key: 'reports', label: 'Reports', icon: FileText, path: '/reports' },
+      { key: 'ai', label: 'AI Insights', icon: Sparkles, path: '/ai' },
+      { key: 'settings', label: 'Settings', icon: Settings, path: '/settings' },
+    ],
+  },
 ];
+const navItems = navSections.flatMap((section) => section.items);
 
 const defaultBackground: BackgroundSettings = {
   blur: 8,
@@ -66,6 +90,7 @@ const defaultDashboardMonth = (() => {
   const date = new Date();
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
 })();
+const dashboardDateLabel = new Date().toLocaleDateString(undefined, { dateStyle: 'medium' });
 
 function formatOperationError(error: unknown): string {
   if (error instanceof Error) return error.message;
@@ -106,11 +131,30 @@ function App() {
   const [recoveryMode, setRecoveryMode] = useState(false);
   const [background, setBackground] = useState<BackgroundSettings>(defaultBackground);
   const [showBackgroundControls, setShowBackgroundControls] = useState(false);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [globalSearch, setGlobalSearch] = useState('');
   const location = useLocation();
+  const navigate = useNavigate();
   const activeKey = useMemo(
     () => navItems.find((item) => item.path === location.pathname)?.key ?? 'dashboard',
     [location.pathname],
   );
+  const displayName = profile?.full_name?.trim() || session?.user.email || 'User';
+  const initials = displayName.split(/\s+/).slice(0, 2).map((part) => part[0]).join('').toUpperCase();
+
+  useEffect(() => {
+    if (!mobileNavOpen) return;
+    const previousOverflow = document.body.style.overflow;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setMobileNavOpen(false);
+    };
+    document.body.style.overflow = 'hidden';
+    window.addEventListener('keydown', closeOnEscape);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener('keydown', closeOnEscape);
+    };
+  }, [mobileNavOpen]);
 
   useEffect(() => {
     if (!supabase) {
@@ -221,6 +265,15 @@ function App() {
     setBackground((prev) => ({ ...prev, [key]: value }));
   };
 
+  const handleGlobalSearch = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const query = globalSearch.trim();
+    if (!query) return;
+    navigate(`/inventory?search=${encodeURIComponent(query)}`);
+    setGlobalSearch('');
+    setMobileNavOpen(false);
+  };
+
   const appStyle = {
     '--bg-blur': `${background.blur}px`,
     '--bg-brightness': background.brightness,
@@ -259,26 +312,43 @@ function App() {
   return (
     <div className="app-shell" style={appStyle}>
       <div className="app-background" />
+      {mobileNavOpen && (
+        <button
+          type="button"
+          className="sidebar-scrim"
+          aria-label="Close navigation menu"
+          onClick={() => setMobileNavOpen(false)}
+        />
+      )}
 
-      <aside className="sidebar glass-panel">
+      <aside className={`sidebar glass-panel${mobileNavOpen ? ' sidebar-open' : ''}`} id="primary-navigation">
         <div className="brand-block">
           <div className="brand-mark">TA</div>
           <div>
             <div className="brand-name">TRUELINE AUTOS</div>
             <div className="brand-subtitle">Smart Showroom</div>
           </div>
+          <button type="button" className="icon-button sidebar-close" aria-label="Close navigation menu" onClick={() => setMobileNavOpen(false)}>
+            <X size={18} />
+          </button>
         </div>
 
         <nav className="nav-list">
-          {navItems.map(({ key, label, icon: Icon, path }) => (
-            <NavLink
-              key={key}
-              to={path}
-              className={({ isActive }) => `nav-item ${isActive || activeKey === key ? 'active' : ''}`}
-            >
-              <Icon size={18} />
-              <span>{label}</span>
-            </NavLink>
+          {navSections.map((section) => (
+            <div className="nav-section" key={section.label}>
+              <p className="nav-section-label">{section.label}</p>
+              {section.items.map(({ key, label, icon: Icon, path }) => (
+                <NavLink
+                  key={key}
+                  to={path}
+                  onClick={() => setMobileNavOpen(false)}
+                  className={({ isActive }) => `nav-item ${isActive || activeKey === key ? 'active' : ''}`}
+                >
+                  <Icon size={18} />
+                  <span>{label}</span>
+                </NavLink>
+              ))}
+            </div>
           ))}
         </nav>
 
@@ -296,31 +366,53 @@ function App() {
 
       <main className="main-panel">
         <header className="topbar glass-panel">
-          <div className="search-wrap">
-            <Search size={16} />
-            <input type="text" placeholder="Search vehicles, partners, invoices..." />
+          <div className="topbar-leading">
+            <button
+              type="button"
+              className="icon-button mobile-menu-toggle"
+              aria-label={mobileNavOpen ? 'Close navigation menu' : 'Open navigation menu'}
+              aria-controls="primary-navigation"
+              aria-expanded={mobileNavOpen}
+              onClick={() => setMobileNavOpen((open) => !open)}
+            >
+              {mobileNavOpen ? <X size={19} /> : <Menu size={19} />}
+            </button>
+            <div className="mobile-brand">
+              <div className="brand-mark">TA</div>
+              <div className="brand-name">TRUELINE AUTOS</div>
+            </div>
+            <form className="search-wrap" onSubmit={handleGlobalSearch} role="search">
+              <Search size={16} aria-hidden="true" />
+              <input
+                type="search"
+                aria-label="Search inventory"
+                placeholder="Search inventory"
+                value={globalSearch}
+                onChange={(event) => setGlobalSearch(event.target.value)}
+              />
+              <button type="submit" className="search-submit" aria-label="Search inventory">
+                <Search size={16} />
+              </button>
+            </form>
           </div>
 
           <div className="topbar-actions">
-            <button type="button" className="icon-button" aria-label="Notifications">
-              <Bell size={18} />
-            </button>
-            <button type="button" className="icon-button" aria-label="Security status">
-              <ShieldCheck size={18} />
-            </button>
             <div className="user-pill">
-              <div className="avatar">SA</div>
+              <div className="avatar">{initials}</div>
               <div>
-                <strong>{profile.role.replace('_', ' ')}</strong>
-                <span>{profile.full_name || session.user.email}</span>
+                <strong>{profile?.role.replaceAll('_', ' ')}</strong>
+                <span>{displayName}</span>
               </div>
             </div>
+            <button type="button" className="icon-button topbar-logout" aria-label="Log out" onClick={() => void handleSignOut()}>
+              <LogOut size={18} />
+            </button>
           </div>
         </header>
 
         <Routes>
           <Route path="/" element={<DashboardView profile={profile} />} />
-          <Route path="/inventory" element={<InventoryView profile={profile} userId={session.user.id} />} />
+          <Route path="/inventory" element={<InventoryView key={location.search} profile={profile} userId={session.user.id} />} />
           <Route path="/purchases" element={<PurchaseView />} />
           <Route path="/sales" element={<SalesView />} />
           <Route path="/partners" element={<PartnersView />} />
@@ -670,8 +762,6 @@ function DashboardView({ profile }: { profile: Profile }) {
       return { key: monthKey, label: date.toLocaleString(undefined, { month: 'short' }), total: totals.get(monthKey) ?? 0 };
     });
   }, [dashboardData.generalExpenses, dashboardData.vehicleExpenses, month, year]);
-  const maxSales = Math.max(...monthlySales.map((item) => item.total), 1);
-  const maxExpenses = Math.max(...monthlyExpenses.map((item) => item.total), 1);
   const partnerFunding = useMemo(() => dashboardData.partners.map((partner) => ({
     ...partner,
     amount: Number(dashboardData.partnerFunding.find((item) => item.partner_id === partner.id)?.amount ?? 0),
@@ -681,6 +771,12 @@ function DashboardView({ profile }: { profile: Profile }) {
     amount: Number(dashboardData.investorFunding.find((item) => item.investor_id === investor.id)?.amount ?? 0),
   })), [dashboardData.investorFunding, dashboardData.investors]);
   const maxFunding = Math.max(...partnerFunding.map((item) => item.amount), ...investorFunding.map((item) => item.amount), 1);
+  const financialTrend = monthlySales.map((item, index) => ({
+    month: item.label,
+    sales: item.total,
+    expenses: monthlyExpenses[index]?.total ?? 0,
+  }));
+  const hasFinancialTrend = financialTrend.some((item) => item.sales > 0 || item.expenses > 0);
   const recordedExpenseTotal = useMemo(
     () => [...dashboardData.vehicleExpenses, ...dashboardData.generalExpenses]
       .filter((item) => item.expense_date.startsWith(selectedMonth))
@@ -758,7 +854,10 @@ function DashboardView({ profile }: { profile: Profile }) {
     return (
       <div className="page-shell">
         <div className="page-header">
-          <div><p className="eyebrow">Your investment overview</p><h2>Investor dashboard</h2></div>
+          <div>
+            <p className="eyebrow">Your investment overview · {dashboardDateLabel}</p>
+            <h2>Welcome back, {profile.full_name?.trim().split(/\s+/)[0] || 'Investor'}</h2>
+          </div>
           <div className="header-actions">
             <button type="button" className="ghost-button" disabled={loading} onClick={() => setRefreshKey((value) => value + 1)}>{loading ? 'Refreshing...' : 'Refresh'}</button>
             <button type="button" className="primary-button" onClick={exportSummary}>Export summary</button>
@@ -791,11 +890,15 @@ function DashboardView({ profile }: { profile: Profile }) {
   return (
     <div className="page-shell">
       <div className="page-header">
-        <div><p className="eyebrow">Operations overview</p><h2>Premium showroom dashboard</h2></div>
+        <div>
+          <p className="eyebrow">Operations overview · {dashboardDateLabel}</p>
+          <h2>Welcome back, {profile.full_name?.trim().split(/\s+/)[0] || 'team'}</h2>
+        </div>
         <div className="header-actions">
           <input aria-label="Dashboard month" type="month" value={selectedMonth} onChange={(event) => setSelectedMonth(event.target.value)} />
           <button type="button" className="ghost-button" disabled={loading} onClick={() => setRefreshKey((value) => value + 1)}>{loading ? 'Refreshing...' : 'Refresh'}</button>
           <button type="button" className="primary-button" onClick={exportSummary}>Export summary</button>
+          <NavLink className="primary-button dashboard-action" to="/inventory">View inventory</NavLink>
         </div>
       </div>
       {error && <p role="alert" className="auth-feedback error">{error}</p>}
@@ -815,17 +918,23 @@ function DashboardView({ profile }: { profile: Profile }) {
       </section>
       <p className="muted">Sales value is not cash received. Outstanding balances use the stored sales balance field and are not reconciled against payment history. Expense totals use recorded expense rows. Profit is unavailable until transaction-safe sales, expense approval, and profit posting are implemented.</p>
 
-      <section className="content-grid two-columns">
-        <div className="glass-panel panel-section">
-          <div className="section-head"><h3>Completed sales · 12 months through {currentMonthLabel}</h3></div>
-          <div className="chart-bars">{monthlySales.map((item) => <div key={item.key} className="bar-stack" title={`${item.label}: ${formatMoney(item.total)}`}><span className="bar" style={{ height: `${item.total ? Math.max(item.total / maxSales * 100, 4) : 0}%` }} /></div>)}</div>
-          <div className="chart-labels">{monthlySales.map((item) => <span key={item.key}>{item.label}</span>)}</div>
+      <section className="glass-panel panel-section">
+        <div className="section-head chart-heading">
+          <div>
+            <h3>Sales & recorded expenses</h3>
+            <p className="muted">Monthly totals · 12 months through {currentMonthLabel}</p>
+          </div>
+          <span className="small-tag">Recorded amounts</span>
         </div>
-        <div className="glass-panel panel-section">
-          <div className="section-head"><h3>Recorded expenses · 12 months</h3></div>
-          <div className="chart-bars">{monthlyExpenses.map((item) => <div key={item.key} className="bar-stack" title={`${item.label}: ${formatMoney(item.total)}`}><span className="bar expense-bar" style={{ height: `${item.total ? Math.max(item.total / maxExpenses * 100, 4) : 0}%` }} /></div>)}</div>
-          <div className="chart-labels">{monthlyExpenses.map((item) => <span key={item.key}>{item.label}</span>)}</div>
-        </div>
+        {loading ? (
+          <p className="muted chart-state" role="status">Loading financial activity...</p>
+        ) : !hasFinancialTrend ? (
+          <p className="muted chart-state">No completed sales or recorded expenses in this period.</p>
+        ) : (
+          <Suspense fallback={<p className="muted chart-state" role="status">Loading chart...</p>}>
+            <SalesExpenseChart data={financialTrend} formatMoney={formatMoney} />
+          </Suspense>
+        )}
       </section>
 
       <section className="content-grid three-columns">
@@ -944,9 +1053,11 @@ const vehicleCategories = [
 ];
 
 function InventoryView({ profile, userId }: { profile: Profile; userId: string }) {
+  const [searchParams] = useSearchParams();
+  const initialSearch = searchParams.get('search')?.trim() ?? '';
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
-  const [searchInput, setSearchInput] = useState('');
-  const [search, setSearch] = useState('');
+  const [searchInput, setSearchInput] = useState(initialSearch);
+  const [search, setSearch] = useState(initialSearch);
   const [statusFilter, setStatusFilter] = useState('all');
   const [categoryFilter, setCategoryFilter] = useState('all');
   const [page, setPage] = useState(0);
