@@ -105,15 +105,19 @@ input {
   top: 1.25rem;
   z-index: 1;
   width: 280px;
-  height: calc(100vh - 2.5rem);
-  min-height: 34rem;
+  height: fit-content;
+  max-height: calc(100dvh - 2.5rem);
+  min-height: 0;
   flex: 0 0 280px;
+  align-self: flex-start;
   border-radius: 24px;
   padding: 1.1rem;
   display: flex;
   flex-direction: column;
   justify-content: space-between;
   overflow-y: auto;
+  overscroll-behavior-y: contain;
+  scroll-behavior: smooth;
 }
 
 .brand-block {
@@ -419,6 +423,10 @@ h3 {
 }
 
 .kpi-card {
+  display: flex;
+  min-width: 0;
+  min-height: 132px;
+  flex-direction: column;
   border-radius: 20px;
   padding: 1rem 1.1rem;
   border-top: 2px solid rgba(112, 196, 255, 0.58);
@@ -426,13 +434,25 @@ h3 {
 
 .kpi-card strong {
   display: block;
-  font-size: clamp(1.5rem, 2vw, 2.1rem);
-  margin-top: 0.75rem;
+  margin-top: auto;
+  padding-top: 0.6rem;
+  font-size: clamp(1.35rem, 1.7vw, 1.9rem);
+  line-height: 1.2;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
 }
 
 .kpi-topline span:first-child {
-  font-size: 0.8rem;
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 0.84rem;
   color: var(--text-secondary);
+  line-height: 1.35;
+}
+
+.kpi-topline {
+  min-height: 2.5rem;
+  align-items: flex-start;
 }
 
 .trend {
@@ -1022,7 +1042,7 @@ h3 {
   }
 }
 
-@media (max-width: 760px) {
+@media (max-width: 820px) {
   .app-shell {
     display: block;
     padding: 0.65rem;
@@ -1034,6 +1054,7 @@ h3 {
     z-index: 20;
     width: min(86vw, 320px);
     height: 100dvh;
+    max-height: none;
     min-height: 0;
     padding: 1rem;
     border-radius: 0 22px 22px 0;
@@ -1150,6 +1171,14 @@ h3 {
   .search-submit {
     display: grid;
     flex: 0 0 auto;
+    width: 40px;
+    height: 40px;
+  }
+
+  .mobile-menu-toggle,
+  .topbar-logout {
+    width: 44px;
+    height: 44px;
   }
 
   .main-panel {
@@ -1298,13 +1327,13 @@ h3 {
   }
 
   .kpi-card {
+    min-height: 124px;
     padding: 0.8rem;
     border-radius: 16px;
   }
 
   .kpi-card strong {
-    font-size: clamp(1.05rem, 5vw, 1.5rem);
-    overflow-wrap: anywhere;
+    font-size: clamp(1.12rem, 4vw, 1.45rem);
   }
 
   .kpi-topline {
@@ -1312,7 +1341,7 @@ h3 {
   }
 
   .kpi-topline span:first-child {
-    font-size: 0.72rem;
+    font-size: 0.78rem;
   }
 
   .kpi-topline .trend {
@@ -1363,11 +1392,25 @@ h3 {
   }
 }
 
-@media (max-width: 360px) {
+@media (max-width: 400px) {
   .kpi-grid {
     grid-template-columns: minmax(0, 1fr);
   }
 
+  .kpi-card {
+    min-height: 116px;
+  }
+
+  .kpi-card strong {
+    font-size: clamp(1.35rem, 5vw, 1.65rem);
+  }
+
+  .kpi-topline span:first-child {
+    font-size: 0.86rem;
+  }
+}
+
+@media (max-width: 360px) {
   .mobile-brand .brand-name {
     letter-spacing: 0.02em;
   }
