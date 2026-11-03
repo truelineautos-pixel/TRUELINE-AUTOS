@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, Route, Routes, NavLink, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import type { Session } from '@supabase/supabase-js';
 import {
@@ -626,6 +626,8 @@ function InventoryView({ profile, userId }: { profile: Profile; userId: string }
   const [editingVehicle, setEditingVehicle] = useState<Vehicle | null>(null);
   const [saleVehicle, setSaleVehicle] = useState<Vehicle | null>(null);
   const [workflowVehicle, setWorkflowVehicle] = useState<Vehicle | null>(null);
+  const saleFormRef = useRef<HTMLElement | null>(null);
+  const workflowFormRef = useRef<HTMLElement | null>(null);
   const [workflowDemand, setWorkflowDemand] = useState('');
   const [directSaleDraft, setDirectSaleDraft] = useState({
     saleDate: new Date().toISOString().slice(0, 10),
@@ -653,6 +655,11 @@ function InventoryView({ profile, userId }: { profile: Profile; userId: string }
   const [fundingDrafts, setFundingDrafts] = useState<FundingDraft[]>([]);
   const [existingFunding, setExistingFunding] = useState<FundingRow[]>([]);
   const pageSize = 50;
+
+  useEffect(() => {
+    const form = saleVehicle ? saleFormRef.current : workflowVehicle ? workflowFormRef.current : null;
+    form?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, [saleVehicle, workflowVehicle]);
 
   const loadVehicles = useCallback(async () => {
     const client = supabase;
@@ -1165,7 +1172,7 @@ function InventoryView({ profile, userId }: { profile: Profile; userId: string }
   const updateWorkflowStage = async (vehicle: Vehicle, workflowStage: string) => {
     if (workflowStage === 'ready_to_sell' && vehicle.business_category !== 'consignment') {
       setWorkflowVehicle(vehicle);
-      setWorkflowDemand('');
+      setWorkflowDemand(vehicle.expected_sale_price === null ? '' : String(vehicle.expected_sale_price));
       return;
     }
     await saveWorkflowStage(vehicle, workflowStage, vehicle.expected_sale_price);
@@ -1361,7 +1368,7 @@ function InventoryView({ profile, userId }: { profile: Profile; userId: string }
       {notice && <p role="status" className="auth-feedback">{notice}</p>}
 
       {workflowVehicle && (
-        <section className="glass-panel panel-section operational-form-panel">
+        <section ref={workflowFormRef} className="glass-panel panel-section operational-form-panel" tabIndex={-1}>
           <div className="section-head">
             <h3>Set Demand · {[workflowVehicle.manufacturing_year, workflowVehicle.make, workflowVehicle.model].filter(Boolean).join(' ')}</h3>
             <button type="button" className="text-button" onClick={() => setWorkflowVehicle(null)}>Cancel</button>
@@ -1375,7 +1382,7 @@ function InventoryView({ profile, userId }: { profile: Profile; userId: string }
       )}
 
       {saleVehicle && (
-        <section className="glass-panel panel-section operational-form-panel">
+        <section ref={saleFormRef} className="glass-panel panel-section operational-form-panel" tabIndex={-1}>
           <div className="section-head">
             <h3>Mark as sold · {[saleVehicle.manufacturing_year, saleVehicle.make, saleVehicle.model].filter(Boolean).join(' ')}</h3>
             <button type="button" className="text-button" onClick={() => setSaleVehicle(null)}>Cancel</button>

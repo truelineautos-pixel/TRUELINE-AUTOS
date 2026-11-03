@@ -1684,8 +1684,32 @@ button:disabled {
 
 .vehicle-card-actions {
   justify-content: space-between;
+  flex-wrap: wrap;
   border-top: 1px solid rgba(148, 183, 217, 0.14);
   padding-top: 0.75rem;
+}
+
+.vehicle-card-admin-actions {
+  width: 100%;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+.vehicle-card-stage-select {
+  flex: 1 1 124px;
+  min-width: 124px;
+}
+
+.vehicle-card-sell-button {
+  flex: 0 0 auto;
+  min-height: 40px;
+  padding: 0.55rem 0.8rem;
+  border: 1px solid rgba(184, 121, 255, 0.35);
+  border-radius: 10px;
+  background: rgba(125, 68, 190, 0.14);
+  color: #d3a6ff;
+  font-weight: 600;
+  white-space: nowrap;
 }
 
 .vehicle-card-details,
