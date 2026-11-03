@@ -28,6 +28,7 @@ type VehicleRecord = {
   chassis_number: string | null;
   engine_number: string | null;
   status: string;
+  workflow_stage: string;
   purchase_date: string | null;
   purchase_price: number | null;
   total_additional_costs: number | null;
@@ -169,7 +170,7 @@ export default function VehicleProfileView({ profile }: { profile: UserProfile }
           <p className="eyebrow">{categoryLabel}</p>
           <h2>{vehicleName}</h2>
           <div className="vehicle-profile-badges">
-            <span className="status-badge">{vehicle.status.replaceAll('_', ' ')}</span>
+            <span className="status-badge">{vehicle.workflow_stage.replaceAll('_', ' ')}</span>
             <span className="vehicle-card-category">{vehicle.registration_number || 'Registration not recorded'}</span>
           </div>
         </div>
@@ -179,11 +180,11 @@ export default function VehicleProfileView({ profile }: { profile: UserProfile }
         <ProfileSection title="Overview">
           <ProfileFacts values={[
             ['Make', vehicle.make], ['Model', vehicle.model], ['Variant', vehicle.variant],
-            ['Manufacturing year', vehicle.manufacturing_year], ['Registration year', vehicle.registration_year],
+            ['Model year', vehicle.manufacturing_year], ['Registration year', vehicle.registration_year],
             ['Registration city', vehicle.registration_city], ['Registration number', vehicle.registration_number],
             ['Color', vehicle.color], ['Mileage', vehicle.mileage === null ? null : `${Number(vehicle.mileage).toLocaleString()} km`],
             ['Engine capacity', vehicle.engine_capacity === null ? null : `${vehicle.engine_capacity} cc`],
-            ['Transmission', vehicle.transmission], ['Fuel type', vehicle.fuel_type], ['Condition', vehicle.condition],
+            ['Transmission', vehicle.transmission],             ['Fuel type', vehicle.fuel_type], ['Workflow stage', vehicle.workflow_stage],
             ['Chassis number', vehicle.chassis_number], ['Engine number', vehicle.engine_number],
           ]} />
           {vehicle.notes && <p className="vehicle-profile-notes">{vehicle.notes}</p>}
@@ -193,7 +194,7 @@ export default function VehicleProfileView({ profile }: { profile: UserProfile }
           <ProfileFacts values={[
             ['Purchase date', vehicle.purchase_date], ['Purchase price', formatMoney(vehicle.purchase_price)],
             ['Additional costs recorded', formatMoney(vehicle.total_additional_costs)],
-            ['Expected sale price', formatMoney(vehicle.expected_sale_price)],
+            [vehicle.business_category === 'consignment' ? 'Customer minimum' : 'Demand', formatMoney(vehicle.expected_sale_price)],
             ['Actual sale price', formatMoney(vehicle.actual_sale_price)],
           ]} />
           {vehicle.business_category === 'consignment' && (
@@ -304,7 +305,7 @@ function ProfileFacts({ values }: { values: [string, string | number | null | un
 async function loadProfile(client: SupabaseClient, vehicleId: string, role: UserProfile['role']): Promise<VehicleProfileData> {
   const { data: vehicle, error: vehicleError } = await client
     .from('vehicles')
-    .select('id, business_category, make, model, variant, manufacturing_year, registration_year, registration_city, registration_number, color, mileage, engine_capacity, transmission, fuel_type, condition, chassis_number, engine_number, status, purchase_date, purchase_price, total_additional_costs, expected_sale_price, actual_sale_price, notes, customer_name, customer_contact')
+    .select('id, business_category, make, model, variant, manufacturing_year, registration_year, registration_city, registration_number, color, mileage, engine_capacity, transmission, fuel_type, condition, chassis_number, engine_number, status, workflow_stage, purchase_date, purchase_price, total_additional_costs, expected_sale_price, actual_sale_price, notes, customer_name, customer_contact')
     .eq('id', vehicleId)
     .maybeSingle();
   if (vehicleError) throw vehicleError;

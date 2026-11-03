@@ -551,6 +551,7 @@ type Vehicle = {
   chassis_number: string | null;
   engine_number: string | null;
   status: string;
+  workflow_stage: string;
   purchase_date: string | null;
   purchase_price: number | null;
   total_additional_costs: number | null;
@@ -623,6 +624,19 @@ function InventoryView({ profile, userId }: { profile: Profile; userId: string }
   const [notice, setNotice] = useState('');
   const [formOpen, setFormOpen] = useState(false);
   const [editingVehicle, setEditingVehicle] = useState<Vehicle | null>(null);
+  const [saleVehicle, setSaleVehicle] = useState<Vehicle | null>(null);
+  const [workflowVehicle, setWorkflowVehicle] = useState<Vehicle | null>(null);
+  const [workflowDemand, setWorkflowDemand] = useState('');
+  const [directSaleDraft, setDirectSaleDraft] = useState({
+    saleDate: new Date().toISOString().slice(0, 10),
+    sellingPrice: '',
+    customerName: '',
+    customerContact: '',
+    heldAmount: '0',
+    releaseCondition: '',
+    paymentMethod: '',
+    referenceNumber: '',
+  });
   const [selectedVehicle, setSelectedVehicle] = useState<Vehicle | null>(null);
   const [vehicleFiles, setVehicleFiles] = useState<VehicleFile[]>([]);
   const [makeSuggestions, setMakeSuggestions] = useState<string[]>([]);
@@ -679,9 +693,9 @@ function InventoryView({ profile, userId }: { profile: Profile; userId: string }
         }
       }
 
-      let query = client.from('vehicles').select('id, business_category, make, model, variant, manufacturing_year, registration_year, registration_city, registration_number, color, mileage, engine_capacity, transmission, fuel_type, condition, chassis_number, engine_number, status, purchase_date, purchase_price, total_additional_costs, expected_sale_price, actual_sale_price, notes, customer_name, customer_contact', { count: 'exact' });
+      let query = client.from('vehicles').select('id, business_category, make, model, variant, manufacturing_year, registration_year, registration_city, registration_number, color, mileage, engine_capacity, transmission, fuel_type, condition, chassis_number, engine_number, status, workflow_stage, purchase_date, purchase_price, total_additional_costs, expected_sale_price, actual_sale_price, notes, customer_name, customer_contact', { count: 'exact' });
       if (categoryFilter !== 'all') query = query.eq('business_category', categoryFilter);
-      if (statusFilter !== 'all') query = query.eq('status', statusFilter);
+      if (statusFilter !== 'all') query = query.eq('workflow_stage', statusFilter);
       if (matchingVehicleIds) query = query.in('id', matchingVehicleIds);
       if (search) {
         const safeSearch = search.replace(/[^a-zA-Z0-9 -]/g, '').trim();
@@ -691,6 +705,7 @@ function InventoryView({ profile, userId }: { profile: Profile; userId: string }
             `model.ilike.%${safeSearch}%`,
             `variant.ilike.%${safeSearch}%`,
             `registration_number.ilike.%${safeSearch}%`,
+            `chassis_number.ilike.%${safeSearch}%`,
           ];
           if (/^\d{1,4}$/.test(safeSearch)) terms.push(`manufacturing_year.eq.${safeSearch}`);
           query = query.or(terms.join(','));
@@ -925,7 +940,7 @@ function InventoryView({ profile, userId }: { profile: Profile; userId: string }
     if (!requestedEditId || profile.role !== 'super_admin' || !supabase) return;
     let active = true;
     void supabase.from('vehicles')
-      .select('id, business_category, make, model, variant, manufacturing_year, registration_year, registration_city, registration_number, color, mileage, engine_capacity, transmission, fuel_type, condition, chassis_number, engine_number, status, purchase_date, purchase_price, total_additional_costs, expected_sale_price, actual_sale_price, notes, customer_name, customer_contact')
+      .select('id, business_category, make, model, variant, manufacturing_year, registration_year, registration_city, registration_number, color, mileage, engine_capacity, transmission, fuel_type, condition, chassis_number, engine_number, status, workflow_stage, purchase_date, purchase_price, total_additional_costs, expected_sale_price, actual_sale_price, notes, customer_name, customer_contact')
       .eq('id', requestedEditId)
       .maybeSingle()
       .then(({ data, error: editError }) => {
@@ -965,30 +980,49 @@ function InventoryView({ profile, userId }: { profile: Profile; userId: string }
     };
     const make = text('make');
     const model = text('model');
+    const workflowStage = editingVehicle && ['sold', 'archived'].includes(editingVehicle.workflow_stage)
+      ? editingVehicle.workflow_stage
+      : text('workflow_stage') || 'processing';
+    const status = workflowStage === 'processing' || workflowStage === 'reserved'
+      ? 'reserved'
+      : workflowStage === 'repairing'
+        ? 'repair'
+        : workflowStage === 'sold'
+          ? 'sold'
+          : workflowStage === 'archived'
+            ? 'archived'
+            : 'available';
+    const repairAmount = number('repair_cost');
+    const vehiclePhoto = formData.get('vehicle_photo');
+    const photoFile = vehiclePhoto instanceof File && vehiclePhoto.size ? vehiclePhoto : null;
+    if (photoFile && (!['image/jpeg', 'image/png', 'image/webp'].includes(photoFile.type) || photoFile.size > 10 * 1024 * 1024)) {
+      setError('Vehicle photo must be a JPG, PNG, or WebP image no larger than 10 MB.');
+      return;
+    }
     const vehicleData = {
       business_category: vehicleCategory,
       make,
       model,
       variant: text('variant') || null,
       manufacturing_year: number('manufacturing_year'),
-      registration_year: number('registration_year'),
-      registration_city: text('registration_city') || null,
+      registration_year: editingVehicle?.registration_year ?? null,
+      registration_city: editingVehicle?.registration_city ?? null,
       registration_number: text('registration_number') || null,
-      color: text('color') || null,
-      mileage: number('mileage'),
-      engine_capacity: number('engine_capacity'),
-      transmission: text('transmission') || null,
-      fuel_type: text('fuel_type') || null,
-      condition: text('condition') || null,
+      color: editingVehicle?.color ?? null,
+      mileage: editingVehicle?.mileage ?? null,
+      engine_capacity: editingVehicle?.engine_capacity ?? null,
+      transmission: editingVehicle?.transmission ?? null,
+      fuel_type: editingVehicle?.fuel_type ?? null,
+      condition: workflowStage,
       chassis_number: text('chassis_number') || null,
-      engine_number: text('engine_number') || null,
-      status: text('status'),
+      engine_number: editingVehicle?.engine_number ?? null,
+      status,
       purchase_date: vehicleCategory === 'consignment' ? null : text('purchase_date') || null,
       purchase_price: vehicleCategory === 'consignment' ? null : number('purchase_price'),
       total_additional_costs: vehicleCategory === 'consignment' ? 0 : number('total_additional_costs') ?? 0,
       expected_sale_price: number('expected_sale_price'),
-      actual_sale_price: number('actual_sale_price'),
-      notes: text('notes') || null,
+      actual_sale_price: editingVehicle?.actual_sale_price ?? null,
+      notes: editingVehicle?.notes ?? null,
       customer_name: vehicleCategory === 'consignment' ? text('customer_name') || null : null,
       customer_contact: vehicleCategory === 'consignment' ? text('customer_contact') || null : null,
     };
@@ -1021,6 +1055,28 @@ function InventoryView({ profile, userId }: { profile: Profile; userId: string }
       setError('Enter the customer name for a customer vehicle.');
       return;
     }
+    if (vehicleCategory === 'consignment' && (!vehicleData.expected_sale_price || vehicleData.expected_sale_price <= 0)) {
+      setError('Enter the customer’s minimum required sale amount.');
+      return;
+    }
+    if (vehicleCategory !== 'consignment' && workflowStage === 'ready_to_sell'
+      && (!vehicleData.expected_sale_price || vehicleData.expected_sale_price <= 0)) {
+      setError('Enter a Demand amount before marking this vehicle ready to sell.');
+      return;
+    }
+    if (repairAmount !== null && repairAmount < 0) {
+      setError('Repair cost cannot be negative.');
+      return;
+    }
+    if (repairAmount !== null && repairAmount > 0 && !text('repair_date')) {
+      setError('Choose a date for the repair cost.');
+      return;
+    }
+    if (repairAmount !== null && repairAmount > 0 && editingVehicle
+      && ['sold', 'archived'].includes(editingVehicle.workflow_stage)) {
+      setError('Repair expenses cannot be added to sold or archived vehicles through this form.');
+      return;
+    }
     const contributions = fundingDrafts.map((draft) => ({
       partner_id: vehicleCategory === 'partner' ? draft.partyId : null,
       investor_id: vehicleCategory === 'investor' ? draft.partyId : null,
@@ -1035,14 +1091,39 @@ function InventoryView({ profile, userId }: { profile: Profile; userId: string }
     setError('');
     setNotice('');
     try {
-      const { data: savedVehicleId, error: saveError } = await supabase.rpc('save_vehicle_with_contributions', {
+      const { data: savedVehicleId, error: saveError } = await supabase.rpc('save_vehicle_with_repair_expense', {
         p_vehicle_id: editingVehicle?.id ?? null,
         p_vehicle: vehicleData,
         p_contributions: contributions,
+        p_repair_amount: repairAmount,
+        p_repair_date: text('repair_date') || null,
       });
       if (saveError || !savedVehicleId) {
         setError(formatOperationError(saveError ?? new Error('Supabase did not return a saved vehicle ID.')));
         return;
+      }
+
+      let photoWarning = '';
+      if (photoFile) {
+        const safeName = photoFile.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+        const objectPath = `${savedVehicleId}/${crypto.randomUUID()}-${safeName}`;
+        const { error: uploadError } = await supabase.storage.from('vehicle-images').upload(objectPath, photoFile, { upsert: false });
+        if (uploadError) {
+          photoWarning = ` Vehicle saved, but its photo could not be uploaded: ${formatOperationError(uploadError)}`;
+        } else {
+          const { error: metadataError } = await supabase.from('vehicle_files').insert({
+            vehicle_id: savedVehicleId,
+            storage_bucket: 'vehicle-images',
+            object_path: objectPath,
+            file_name: photoFile.name,
+            content_type: photoFile.type,
+            uploaded_by: userId,
+          });
+          if (metadataError) {
+            await supabase.storage.from('vehicle-images').remove([objectPath]);
+            photoWarning = ` Vehicle saved, but its photo record could not be saved: ${formatOperationError(metadataError)}`;
+          }
+        }
       }
 
       let catalogWarning = '';
@@ -1064,9 +1145,10 @@ function InventoryView({ profile, userId }: { profile: Profile; userId: string }
         catalogWarning = ` Catalog suggestion was not saved: ${formatOperationError(catalogError)}`;
       }
 
-      setNotice(`${editingVehicle ? 'Vehicle updated.' : 'Vehicle added.'}${catalogWarning}`);
+      setNotice(`${editingVehicle ? 'Vehicle updated.' : 'Vehicle added.'}${catalogWarning}${photoWarning}`);
       setFormOpen(false);
       setEditingVehicle(null);
+      setSaleVehicle(null);
       try {
         if (page === 0) await loadVehicles();
         else setPage(0);
@@ -1078,6 +1160,119 @@ function InventoryView({ profile, userId }: { profile: Profile; userId: string }
     } finally {
       setSaving(false);
     }
+  };
+
+  const updateWorkflowStage = async (vehicle: Vehicle, workflowStage: string) => {
+    if (workflowStage === 'ready_to_sell' && vehicle.business_category !== 'consignment') {
+      setWorkflowVehicle(vehicle);
+      setWorkflowDemand('');
+      return;
+    }
+    await saveWorkflowStage(vehicle, workflowStage, vehicle.expected_sale_price);
+  };
+
+  const saveWorkflowStage = async (vehicle: Vehicle, workflowStage: string, demand: number | null) => {
+    if (!supabase || profile.role !== 'super_admin') return;
+    if (workflowStage === 'ready_to_sell' && (!demand || demand <= 0)) {
+      setError(vehicle.business_category === 'consignment'
+        ? 'Set the customer minimum requirement before marking this consignment vehicle ready.'
+        : 'Enter a positive Demand amount before marking the vehicle ready to sell.');
+      return;
+    }
+    setSaving(true);
+    setError('');
+    setNotice('');
+    const { error: updateError } = await supabase.rpc('update_vehicle_workflow', {
+      p_vehicle_id: vehicle.id,
+      p_workflow_stage: workflowStage,
+      p_demand: workflowStage === 'ready_to_sell' ? demand : null,
+    });
+    if (updateError) setError(formatOperationError(updateError));
+    else {
+      setNotice(`${vehicle.make} ${vehicle.model} moved to ${workflowStage.replaceAll('_', ' ')}.`);
+      setWorkflowVehicle(null);
+      await loadVehicles();
+    }
+    setSaving(false);
+  };
+
+  const submitWorkflowStage = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!workflowVehicle) return;
+    const demand = Number(workflowDemand);
+    await saveWorkflowStage(workflowVehicle, 'ready_to_sell', demand);
+  };
+
+  const markVehicleSold = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!supabase || profile.role !== 'super_admin' || !saleVehicle) return;
+    const sellingPrice = Number(directSaleDraft.sellingPrice);
+    const heldAmount = Number(directSaleDraft.heldAmount || 0);
+    if (!directSaleDraft.customerName.trim() || !directSaleDraft.saleDate || sellingPrice <= 0
+      || heldAmount < 0 || heldAmount > sellingPrice
+      || (heldAmount > 0 && !directSaleDraft.releaseCondition.trim())) {
+      setError('Enter the buyer, sale date, a positive sold price, and a release condition for any held amount.');
+      return;
+    }
+    if (saleVehicle.business_category === 'consignment'
+      && saleVehicle.expected_sale_price !== null
+      && sellingPrice < saleVehicle.expected_sale_price) {
+      setError('Sold price cannot be below the customer minimum requirement.');
+      return;
+    }
+    const saleLabel = [saleVehicle.manufacturing_year, saleVehicle.make, saleVehicle.model].filter(Boolean).join(' ');
+    if (!window.confirm(`Mark ${saleLabel} as sold for ${formatInventoryMoney(sellingPrice)}? This records the completed sale, any held balance, and the approved profit calculation.`)) return;
+
+    setSaving(true);
+    setError('');
+    setNotice('');
+    try {
+      const { error: saleError } = await supabase.rpc('record_direct_vehicle_sale', {
+        p_vehicle_id: saleVehicle.id,
+        p_selling_price: sellingPrice,
+        p_sale_date: directSaleDraft.saleDate,
+        p_customer_name: directSaleDraft.customerName.trim(),
+        p_customer_contact: directSaleDraft.customerContact.trim() || null,
+        p_held_amount: heldAmount,
+        p_release_condition: directSaleDraft.releaseCondition.trim() || null,
+        p_payment_method: directSaleDraft.paymentMethod.trim() || null,
+        p_reference_number: directSaleDraft.referenceNumber.trim() || null,
+      });
+      if (saleError) throw saleError;
+      setNotice(`Sale recorded for ${saleLabel}. The vehicle is marked sold and its approved profit calculation is available in Profit.`);
+      setSaleVehicle(null);
+      setDirectSaleDraft({
+        saleDate: new Date().toISOString().slice(0, 10),
+        sellingPrice: '',
+        customerName: '',
+        customerContact: '',
+        heldAmount: '0',
+        releaseCondition: '',
+        paymentMethod: '',
+        referenceNumber: '',
+      });
+      await loadVehicles();
+    } catch (saleError) {
+      setError(formatOperationError(saleError));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const openMarkSoldForm = (vehicle: Vehicle) => {
+    setError('');
+    setNotice('');
+    setDirectSaleDraft({
+      saleDate: new Date().toISOString().slice(0, 10),
+      sellingPrice: '',
+      customerName: vehicle.business_category === 'consignment' ? vehicle.customer_name ?? '' : '',
+      customerContact: vehicle.business_category === 'consignment' ? vehicle.customer_contact ?? '' : '',
+      heldAmount: '0',
+      releaseCondition: '',
+      paymentMethod: '',
+      referenceNumber: '',
+    });
+    setSaleVehicle(vehicle);
   };
 
   const archiveVehicle = async (vehicle: Vehicle) => {
@@ -1165,6 +1360,46 @@ function InventoryView({ profile, userId }: { profile: Profile; userId: string }
       {error && <p role="alert" className="auth-feedback error">{error}</p>}
       {notice && <p role="status" className="auth-feedback">{notice}</p>}
 
+      {workflowVehicle && (
+        <section className="glass-panel panel-section operational-form-panel">
+          <div className="section-head">
+            <h3>Set Demand · {[workflowVehicle.manufacturing_year, workflowVehicle.make, workflowVehicle.model].filter(Boolean).join(' ')}</h3>
+            <button type="button" className="text-button" onClick={() => setWorkflowVehicle(null)}>Cancel</button>
+          </div>
+          <p className="operational-note">Enter the asking Demand before this vehicle becomes Ready to sell.</p>
+          <form className="operational-form" onSubmit={(event) => void submitWorkflowStage(event)}>
+            <label>Demand<input type="number" min="0.01" step="0.01" required value={workflowDemand} onChange={(event) => setWorkflowDemand(event.target.value)} /></label>
+            <button type="submit" className="primary-button" disabled={saving}>{saving ? 'Saving...' : 'Save Demand and mark ready'}</button>
+          </form>
+        </section>
+      )}
+
+      {saleVehicle && (
+        <section className="glass-panel panel-section operational-form-panel">
+          <div className="section-head">
+            <h3>Mark as sold · {[saleVehicle.manufacturing_year, saleVehicle.make, saleVehicle.model].filter(Boolean).join(' ')}</h3>
+            <button type="button" className="text-button" onClick={() => setSaleVehicle(null)}>Cancel</button>
+          </div>
+          <p className="operational-note">
+            This records a completed sale and approved profit calculation. A buyer holdback can remain outstanding while the vehicle is marked sold.
+            {saleVehicle.business_category === 'consignment'
+              ? ` The customer minimum is ${saleVehicle.expected_sale_price === null ? 'not recorded' : formatInventoryMoney(saleVehicle.expected_sale_price)}; expenses are shown separately.`
+              : ' Profit uses the sold price less purchase price, additional purchase costs, and recorded vehicle expenses.'}
+          </p>
+          <form className="operational-form" onSubmit={(event) => void markVehicleSold(event)}>
+            <label>Sold price<input type="number" min="0.01" step="0.01" required value={directSaleDraft.sellingPrice} onChange={(event) => setDirectSaleDraft({ ...directSaleDraft, sellingPrice: event.target.value })} /></label>
+            <label>Customer name<input required value={directSaleDraft.customerName} onChange={(event) => setDirectSaleDraft({ ...directSaleDraft, customerName: event.target.value })} /></label>
+            <label>Customer contact<input value={directSaleDraft.customerContact} onChange={(event) => setDirectSaleDraft({ ...directSaleDraft, customerContact: event.target.value })} /></label>
+            <label>Sale date<input type="date" required value={directSaleDraft.saleDate} onChange={(event) => setDirectSaleDraft({ ...directSaleDraft, saleDate: event.target.value })} /></label>
+            <label>Amount held back<input type="number" min="0" step="0.01" value={directSaleDraft.heldAmount} onChange={(event) => setDirectSaleDraft({ ...directSaleDraft, heldAmount: event.target.value })} /></label>
+            {Number(directSaleDraft.heldAmount) > 0 && <label>Condition for release<input required placeholder="e.g. ownership transfer complete" value={directSaleDraft.releaseCondition} onChange={(event) => setDirectSaleDraft({ ...directSaleDraft, releaseCondition: event.target.value })} /></label>}
+            <label>Payment method<input value={directSaleDraft.paymentMethod} onChange={(event) => setDirectSaleDraft({ ...directSaleDraft, paymentMethod: event.target.value })} /></label>
+            <label>Payment reference<input value={directSaleDraft.referenceNumber} onChange={(event) => setDirectSaleDraft({ ...directSaleDraft, referenceNumber: event.target.value })} /></label>
+            <button type="submit" className="primary-button" disabled={saving}>{saving ? 'Saving...' : 'Confirm sale and calculate profit'}</button>
+          </form>
+        </section>
+      )}
+
       <div className="inventory-filters glass-panel">
         <div className="inventory-filter-primary">
           <input aria-label="Search inventory" type="search" placeholder="Search make, model, variant, registration, year" value={searchInput} onChange={(event) => setSearchInput(event.target.value)} />
@@ -1174,7 +1409,12 @@ function InventoryView({ profile, userId }: { profile: Profile; userId: string }
           </select>
           <select aria-label="Filter by status" value={statusFilter} onChange={(event) => { setPage(0); setStatusFilter(event.target.value); }}>
             <option value="all">All statuses</option>
-            {['available', 'reserved', 'repair', 'sold', 'archived'].map((status) => <option key={status} value={status}>{status.replaceAll('_', ' ')}</option>)}
+            <option value="processing">Processing</option>
+            <option value="repairing">Repairing</option>
+            <option value="ready_to_sell">Ready to sell</option>
+            <option value="reserved">Reserved</option>
+            <option value="sold">Sold</option>
+            <option value="archived">Archived</option>
           </select>
           <select aria-label="Filter by funding partner or investor" value={fundingPartyFilter} onChange={(event) => { setPage(0); setFundingPartyFilter(event.target.value); }}>
             <option value="">All contributors</option>
@@ -1210,24 +1450,19 @@ function InventoryView({ profile, userId }: { profile: Profile; userId: string }
                 <label className="field-group">Make<input name="make" required list="vehicle-makes" defaultValue={editingVehicle?.make ?? ''} onChange={(event) => setFormMake(event.target.value)} /><datalist id="vehicle-makes">{makeSuggestions.map((make) => <option key={make} value={make} />)}</datalist></label>
                 <label className="field-group">Model<input name="model" required list="vehicle-models" value={formModel} onChange={(event) => setFormModel(event.target.value)} /><datalist id="vehicle-models">{matchingModelSuggestions.map((model) => <option key={model} value={model} />)}</datalist></label>
                 <label className="field-group">Variant<input name="variant" list="vehicle-variants" defaultValue={editingVehicle?.variant ?? ''} /><datalist id="vehicle-variants">{matchingVariantSuggestions.map((variant) => <option key={variant} value={variant} />)}</datalist></label>
-                <label className="field-group">Manufacturing year<input name="manufacturing_year" type="number" min="1900" max="2100" defaultValue={editingVehicle?.manufacturing_year ?? ''} /></label>
-                <label className="field-group">Color<input name="color" defaultValue={editingVehicle?.color ?? ''} /></label>
-                <label className="field-group">Mileage<input name="mileage" type="number" min="0" step="1" defaultValue={editingVehicle?.mileage ?? ''} /></label>
-                <label className="field-group">Engine capacity (cc)<input name="engine_capacity" type="number" min="0" step="0.01" defaultValue={editingVehicle?.engine_capacity ?? ''} /></label>
-                <label className="field-group">Transmission<select name="transmission" defaultValue={editingVehicle?.transmission ?? ''}><option value="">Select transmission</option><option value="automatic">Automatic</option><option value="manual">Manual</option><option value="cvt">CVT</option><option value="other">Other</option></select></label>
-                <label className="field-group">Fuel type<select name="fuel_type" defaultValue={editingVehicle?.fuel_type ?? ''}><option value="">Select fuel type</option><option value="petrol">Petrol</option><option value="diesel">Diesel</option><option value="hybrid">Hybrid</option><option value="electric">Electric</option><option value="cng">CNG</option><option value="other">Other</option></select></label>
-                <label className="field-group">Condition<select name="condition" defaultValue={editingVehicle?.condition ?? ''}><option value="">Select condition</option><option value="new">New</option><option value="used">Used</option><option value="certified">Certified</option></select></label>
+                <label className="field-group">Model year<input name="manufacturing_year" type="number" min="1900" max="2100" defaultValue={editingVehicle?.manufacturing_year ?? ''} /></label>
               </div>
             </section>
 
             {vehicleCategory === 'consignment' ? (
               <section className="vehicle-form-section">
-                <h4>Customer details</h4>
+                <h4>Consignment details</h4>
                 <div className="vehicle-field-grid">
                   <label className="field-group">Customer name<input name="customer_name" required defaultValue={editingVehicle?.customer_name ?? ''} /></label>
                   <label className="field-group">Customer contact<input name="customer_contact" type="tel" defaultValue={editingVehicle?.customer_contact ?? ''} /></label>
+                  <label className="field-group">Customer minimum requirement<input name="expected_sale_price" type="number" min="0.01" step="0.01" required defaultValue={editingVehicle?.expected_sale_price ?? ''} /></label>
                 </div>
-                <p className="muted">Customer vehicles are consigned and are not recorded as partner- or investor-funded inventory.</p>
+                <p className="muted">No showroom purchase price or partner/investor funding is recorded for consignment vehicles. A sale below this minimum is blocked; expenses remain separate.</p>
               </section>
             ) : (
               <section className="vehicle-form-section">
@@ -1268,34 +1503,32 @@ function InventoryView({ profile, userId }: { profile: Profile; userId: string }
             )}
 
             <section className="vehicle-form-section">
-              <h4>Registration details</h4>
+              <h4>Vehicle identifiers</h4>
               <div className="vehicle-field-grid">
-                <label className="field-group">Registration year<input name="registration_year" type="number" min="1900" max="2100" defaultValue={editingVehicle?.registration_year ?? ''} /></label>
-                <label className="field-group">Registration city<input name="registration_city" defaultValue={editingVehicle?.registration_city ?? ''} /></label>
-                <label className="field-group">Registration number<input name="registration_number" defaultValue={editingVehicle?.registration_number ?? ''} /></label>
+                <label className="field-group">Vehicle number (registration)<input name="registration_number" defaultValue={editingVehicle?.registration_number ?? ''} /></label>
                 <label className="field-group">Chassis number<input name="chassis_number" defaultValue={editingVehicle?.chassis_number ?? ''} /></label>
-                <label className="field-group">Engine number<input name="engine_number" defaultValue={editingVehicle?.engine_number ?? ''} /></label>
               </div>
             </section>
 
             <section className="vehicle-form-section">
-              <h4>Purchase &amp; pricing</h4>
+              <h4>Price and vehicle status</h4>
               <div className="vehicle-field-grid">
                 {vehicleCategory !== 'consignment' && <>
                   <label className="field-group">Purchase date<input name="purchase_date" type="date" defaultValue={editingVehicle?.purchase_date ?? ''} /></label>
                   <label className="field-group">Purchase price<input name="purchase_price" type="number" min="0" step="0.01" required defaultValue={editingVehicle?.purchase_price ?? ''} /></label>
-                  <label className="field-group">Total additional costs<input name="total_additional_costs" type="number" min="0" step="0.01" defaultValue={editingVehicle?.total_additional_costs ?? 0} /></label>
+                  <label className="field-group">Additional purchase costs<input name="total_additional_costs" type="number" min="0" step="0.01" defaultValue={editingVehicle?.total_additional_costs ?? 0} /></label>
+                  <label className="field-group">Demand<input name="expected_sale_price" type="number" min="0" step="0.01" defaultValue={editingVehicle?.expected_sale_price ?? ''} /></label>
                 </>}
-                <label className="field-group">Expected sale price<input name="expected_sale_price" type="number" min="0" step="0.01" defaultValue={editingVehicle?.expected_sale_price ?? ''} /></label>
-                <label className="field-group">Actual sale price<input name="actual_sale_price" type="number" min="0" step="0.01" defaultValue={editingVehicle?.actual_sale_price ?? ''} /></label>
-                <label className="field-group">Vehicle status<select name="status" defaultValue={editingVehicle?.status ?? 'available'}><option value="available">Available</option><option value="reserved">Reserved</option><option value="repair">Repair</option><option value="sold">Sold</option><option value="archived">Archived</option></select></label>
+                <label className="field-group">Repair cost to record now<input name="repair_cost" type="number" min="0" step="0.01" placeholder="Leave blank if none" /></label>
+                <label className="field-group">Repair date<input name="repair_date" type="date" defaultValue={new Date().toISOString().slice(0, 10)} /></label>
+                {editingVehicle && ['sold', 'archived'].includes(editingVehicle.workflow_stage)
+                  ? <label className="field-group">Vehicle status<input value={editingVehicle.workflow_stage === 'sold' ? 'Sold' : 'Archived'} readOnly /></label>
+                  : <label className="field-group">Vehicle status<select name="workflow_stage" defaultValue={editingVehicle?.workflow_stage ?? 'processing'}><option value="processing">Processing</option><option value="repairing">Repairing</option><option value="ready_to_sell">Ready to sell</option><option value="reserved">Reserved</option></select></label>}
+                {!editingVehicle && <label className="field-group">Vehicle photo<input name="vehicle_photo" type="file" accept="image/jpeg,image/png,image/webp" /></label>}
               </div>
+              <p className="muted">Repair costs are saved as vehicle expenses. Demand is an asking amount; it is not used as the sold price.</p>
             </section>
 
-            <section className="vehicle-form-section">
-              <h4>Other information</h4>
-              <label className="field-group">Notes<textarea name="notes" rows={3} defaultValue={editingVehicle?.notes ?? ''} /></label>
-            </section>
             <div className="vehicle-form-actions"><button type="button" className="ghost-button" disabled={saving} onClick={() => setFormOpen(false)}>Cancel</button><button type="submit" className="primary-button" disabled={saving || partiesLoading || fundingLoading}>{saving ? 'Saving...' : partiesLoading || fundingLoading ? 'Loading funding...' : 'Save vehicle'}</button></div>
           </form>
         </div>
@@ -1314,6 +1547,8 @@ function InventoryView({ profile, userId }: { profile: Profile; userId: string }
                 canManage={profile.role === 'super_admin'}
                 onEdit={() => openEditVehicle(vehicle)}
                 onArchive={() => void archiveVehicle(vehicle)}
+                onMarkSold={() => openMarkSoldForm(vehicle)}
+                onWorkflowChange={(stage) => void updateWorkflowStage(vehicle, stage)}
               />
             ))}
           </div>
@@ -1324,7 +1559,7 @@ function InventoryView({ profile, userId }: { profile: Profile; userId: string }
               <th>Category</th>
               <th>Status</th>
               <th>Purchase cost</th>
-              <th>Expected sale</th>
+              <th>Demand / customer minimum</th>
               <th>Actions</th>
             </tr>
           </thead>
@@ -1338,12 +1573,19 @@ function InventoryView({ profile, userId }: { profile: Profile; userId: string }
                   <span className="table-subtext">{vehicle.registration_number || 'Registration not recorded'}</span>
                 </td>
                 <td>{vehicleCategories.find((category) => category.value === vehicle.business_category)?.label ?? vehicle.business_category}</td>
-                <td><span className="status-badge">{vehicle.status.replaceAll('_', ' ')}</span></td>
-                <td>{vehicle.purchase_price === null ? 'Not recorded' : formatInventoryMoney(vehicle.purchase_price)}</td>
+                <td><span className={`vehicle-card-status status-${vehicle.workflow_stage}`}>{vehicle.workflow_stage.replaceAll('_', ' ')}</span></td>
+                <td>{vehicle.business_category === 'consignment' ? 'Not applicable' : vehicle.purchase_price === null ? 'Not recorded' : formatInventoryMoney(vehicle.purchase_price)}</td>
                 <td>{vehicle.expected_sale_price === null ? 'Not recorded' : formatInventoryMoney(vehicle.expected_sale_price)}</td>
                 <td className="inventory-actions">
                   <button type="button" className="text-button" onClick={() => void loadVehicleFiles(vehicle)}>Files</button>
-                  {profile.role === 'super_admin' && <><button type="button" className="text-button" onClick={() => openEditVehicle(vehicle)}>Edit</button>{vehicle.status !== 'archived' && <button type="button" className="text-button" onClick={() => void archiveVehicle(vehicle)}>Archive</button>}</>}
+                  {profile.role === 'super_admin' && <>
+                    <button type="button" className="text-button" onClick={() => openEditVehicle(vehicle)}>Edit</button>
+                    {vehicle.workflow_stage === 'ready_to_sell' && <button type="button" className="text-button" onClick={() => openMarkSoldForm(vehicle)}>Mark as sold</button>}
+                    {vehicle.workflow_stage !== 'sold' && vehicle.workflow_stage !== 'archived' && <select aria-label={`Update status for ${vehicle.make} ${vehicle.model}`} value={vehicle.workflow_stage} onChange={(event) => void updateWorkflowStage(vehicle, event.target.value)}>
+                      <option value="processing">Processing</option><option value="repairing">Repairing</option><option value="ready_to_sell">Ready to sell</option><option value="reserved">Reserved</option>
+                    </select>}
+                    {vehicle.workflow_stage !== 'archived' && <button type="button" className="text-button" onClick={() => void archiveVehicle(vehicle)}>Archive</button>}
+                  </>}
                 </td>
               </tr>
             ))}

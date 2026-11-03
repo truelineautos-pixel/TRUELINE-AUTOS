@@ -14,6 +14,7 @@ type Vehicle = {
   registration_number: string | null;
   business_category: string;
   status: string;
+  workflow_stage: string;
   purchase_date: string | null;
   purchase_price: number | null;
   expected_sale_price: number | null;
@@ -24,6 +25,9 @@ type Party = { id: string; name: string; status: string };
 type Funding = { id: string; vehicle_id: string; partner_id: string | null; investor_id: string | null; amount: number; contribution_date: string; payment_method: string | null; reference_number: string | null };
 type Sale = { id: string; vehicle_id: string; customer_name: string; customer_contact: string | null; sale_date: string; selling_price: number; advance_payment: number | null; remaining_balance: number | null; status: string };
 type SalePayment = { id: string; sale_id: string; amount: number; payment_method: string | null; payment_date: string; reference_number: string | null };
+type Holdback = { id: string; vehicle_id: string; sale_id: string | null; transaction_type: 'purchase' | 'sale'; deal_amount: number; paid_at_start: number; held_amount: number; released_amount: number; release_condition: string; created_at: string };
+type HoldbackRelease = { id: string; holdback_id: string; amount: number; payment_date: string; payment_method: string | null; reference_number: string | null; notes: string | null };
+type HoldbackReleaseDraft = { holdbackId: string; amount: string; date: string; method: string; reference: string; notes: string; conditionConfirmed: boolean };
 type VehicleExpense = { id: string; vehicle_id: string; expense_type: string; amount: number; expense_date: string; payment_method: string | null; receipt_url: string | null; notes: string | null };
 type GeneralExpense = { id: string; category: string; amount: number; expense_date: string; payment_method: string | null; receipt_url: string | null; notes: string | null };
 type FinancialTransaction = { id: string; transaction_type: string; amount: number; currency: string; related_vehicle_id: string | null; related_partner_id: string | null; related_investor_id: string | null; status: string; created_at: string; notes: string | null };
@@ -39,6 +43,8 @@ type Data = {
   funding: Funding[];
   sales: Sale[];
   salePayments: SalePayment[];
+  holdbacks: Holdback[];
+  holdbackReleases: HoldbackRelease[];
   vehicleExpenses: VehicleExpense[];
   generalExpenses: GeneralExpense[];
   transactions: FinancialTransaction[];
@@ -51,6 +57,7 @@ type Data = {
 
 const EMPTY: Data = {
   vehicles: [], partners: [], investors: [], funding: [], sales: [], salePayments: [],
+  holdbacks: [], holdbackReleases: [],
   vehicleExpenses: [], generalExpenses: [], transactions: [], reserveTransactions: [], reserves: [],
   distributions: [], distributionPayments: [], calculations: [],
 };
@@ -86,10 +93,11 @@ export default function OperationalManagement({ section, profile, userId }: { se
   const [to, setTo] = useState('');
   const [refresh, setRefresh] = useState(0);
   const [selectedSale, setSelectedSale] = useState('');
-  const [purchase, setPurchase] = useState({ make: '', model: '', variant: '', year: '', registration: '', date: today, price: '', category: 'partner', notes: '', customer_name: '', customer_contact: '' });
+  const [purchase, setPurchase] = useState({ make: '', model: '', variant: '', year: '', registration: '', date: today, price: '', category: 'partner', notes: '', customer_name: '', customer_contact: '', customerMinimum: '', heldAmount: '0', releaseCondition: '', paymentMethod: '', referenceNumber: '', photo: null as File | null });
   const [fundingDrafts, setFundingDrafts] = useState([{ partyId: '', amount: '', date: today }]);
   const [saleDraft, setSaleDraft] = useState({ vehicleId: '', date: today, price: '', customer: '', contact: '' });
   const [paymentDraft, setPaymentDraft] = useState({ amount: '', date: today, method: '', reference: '' });
+  const [holdbackReleaseDraft, setHoldbackReleaseDraft] = useState<HoldbackReleaseDraft>({ holdbackId: '', amount: '', date: today, method: '', reference: '', notes: '', conditionConfirmed: false });
   const [expenseDraft, setExpenseDraft] = useState({ kind: 'vehicle', vehicleId: '', category: 'Repairs', amount: '', date: today, method: '', notes: '', receipt: null as File | null });
   const [transactionType, setTransactionType] = useState('all');
   const [expenseCategoryFilter, setExpenseCategoryFilter] = useState('all');
@@ -112,18 +120,22 @@ export default function OperationalManagement({ section, profile, userId }: { se
       const requests: Record<string, PromiseLike<{ data: unknown; error: { message: string } | null }>> = {};
       if (section === 'purchases') {
         if (investorOnly) throw new Error('Purchase history is restricted to Super Admins and Partners; this account can view its permitted vehicle-linked records in the vehicle profile.');
-        requests.vehicles = client.from('vehicles').select('id, make, model, variant, manufacturing_year, registration_number, business_category, status, purchase_date, purchase_price, expected_sale_price, customer_name, customer_contact').not('purchase_date', 'is', null).order('purchase_date', { ascending: false });
+        requests.vehicles = client.from('vehicles').select('id, make, model, variant, manufacturing_year, registration_number, business_category, status, workflow_stage, purchase_date, purchase_price, expected_sale_price, customer_name, customer_contact').not('purchase_date', 'is', null).order('purchase_date', { ascending: false });
         requests.funding = client.from('funding_contributions').select('id, vehicle_id, partner_id, investor_id, amount, contribution_date, payment_method, reference_number').order('contribution_date', { ascending: false });
+        requests.holdbacks = client.from('vehicle_payment_holdbacks').select('id, vehicle_id, sale_id, transaction_type, deal_amount, paid_at_start, held_amount, released_amount, release_condition, created_at').eq('transaction_type', 'purchase').order('created_at', { ascending: false });
+        requests.holdbackReleases = client.from('vehicle_payment_holdback_releases').select('id, holdback_id, amount, payment_date, payment_method, reference_number, notes').order('payment_date', { ascending: false });
         requests.partners = client.from('partners').select('id, name, status').order('name');
         if (isAdmin) requests.investors = client.from('investors').select('id, name, status').order('name');
       } else if (section === 'sales') {
         if (investorOnly) throw new Error('Sales and customer records are not available under this account’s data permissions.');
-        requests.vehicles = client.from('vehicles').select('id, make, model, variant, manufacturing_year, registration_number, business_category, status, purchase_date, purchase_price, expected_sale_price, customer_name, customer_contact').order('purchase_date', { ascending: false });
+        requests.vehicles = client.from('vehicles').select('id, make, model, variant, manufacturing_year, registration_number, business_category, status, workflow_stage, purchase_date, purchase_price, expected_sale_price, customer_name, customer_contact').order('purchase_date', { ascending: false });
         requests.sales = client.from('sales').select('id, vehicle_id, customer_name, customer_contact, sale_date, selling_price, advance_payment, remaining_balance, status').order('sale_date', { ascending: false });
         requests.salePayments = client.from('sale_payments').select('id, sale_id, amount, payment_method, payment_date, reference_number').order('payment_date', { ascending: false });
+        requests.holdbacks = client.from('vehicle_payment_holdbacks').select('id, vehicle_id, sale_id, transaction_type, deal_amount, paid_at_start, held_amount, released_amount, release_condition, created_at').eq('transaction_type', 'sale').order('created_at', { ascending: false });
+        requests.holdbackReleases = client.from('vehicle_payment_holdback_releases').select('id, holdback_id, amount, payment_date, payment_method, reference_number, notes').order('payment_date', { ascending: false });
       } else if (section === 'expenses') {
         if (investorOnly) throw new Error('Expense records are not available under this account’s data permissions.');
-        requests.vehicles = client.from('vehicles').select('id, make, model, variant, manufacturing_year, registration_number, business_category, status, purchase_date, purchase_price, expected_sale_price, customer_name, customer_contact').order('purchase_date', { ascending: false });
+        requests.vehicles = client.from('vehicles').select('id, make, model, variant, manufacturing_year, registration_number, business_category, status, workflow_stage, purchase_date, purchase_price, expected_sale_price, customer_name, customer_contact').order('purchase_date', { ascending: false });
         requests.vehicleExpenses = client.from('vehicle_expenses').select('id, vehicle_id, expense_type, amount, expense_date, payment_method, receipt_url, notes').order('expense_date', { ascending: false });
         requests.generalExpenses = client.from('general_expenses').select('id, category, amount, expense_date, payment_method, receipt_url, notes').order('expense_date', { ascending: false });
       } else if (section === 'finance') {
@@ -132,7 +144,7 @@ export default function OperationalManagement({ section, profile, userId }: { se
         requests.distributions = client.from('profit_distributions').select('id, vehicle_id, recipient_type, recipient_id, amount, rule_name, approval_status, created_at').order('created_at', { ascending: false });
         requests.distributionPayments = client.from('distribution_payments').select('id, distribution_id, paid_amount, payment_date, payment_method').order('payment_date', { ascending: false });
         if (!investorOnly) {
-          requests.vehicles = client.from('vehicles').select('id, make, model, variant, manufacturing_year, registration_number, business_category, status, purchase_date, purchase_price, expected_sale_price, customer_name, customer_contact');
+          requests.vehicles = client.from('vehicles').select('id, make, model, variant, manufacturing_year, registration_number, business_category, status, workflow_stage, purchase_date, purchase_price, expected_sale_price, customer_name, customer_contact');
           requests.partners = client.from('partners').select('id, name, status');
           requests.investors = client.from('investors').select('id, name, status');
           requests.sales = client.from('sales').select('id, vehicle_id, customer_name, customer_contact, sale_date, selling_price, advance_payment, remaining_balance, status').order('sale_date', { ascending: false });
@@ -147,7 +159,7 @@ export default function OperationalManagement({ section, profile, userId }: { se
         requests.distributions = client.from('profit_distributions').select('id, vehicle_id, recipient_type, recipient_id, amount, rule_name, approval_status, created_at').order('created_at', { ascending: false });
         requests.distributionPayments = client.from('distribution_payments').select('id, distribution_id, paid_amount, payment_date, payment_method').order('payment_date', { ascending: false });
         if (!investorOnly) {
-          requests.vehicles = client.from('vehicles').select('id, make, model, variant, manufacturing_year, registration_number, business_category, status, purchase_date, purchase_price, expected_sale_price, customer_name, customer_contact');
+          requests.vehicles = client.from('vehicles').select('id, make, model, variant, manufacturing_year, registration_number, business_category, status, workflow_stage, purchase_date, purchase_price, expected_sale_price, customer_name, customer_contact');
           requests.sales = client.from('sales').select('id, vehicle_id, customer_name, customer_contact, sale_date, selling_price, advance_payment, remaining_balance, status').order('sale_date', { ascending: false });
           requests.vehicleExpenses = client.from('vehicle_expenses').select('id, vehicle_id, expense_type, amount, expense_date, payment_method, receipt_url, notes').order('expense_date', { ascending: false });
           requests.calculations = client.from('profit_calculations').select('id, vehicle_id, sale_id, purchase_cost, approved_expenses, sale_proceeds, net_profit, status, created_at').eq('status', 'approved').order('created_at', { ascending: false });
@@ -171,7 +183,7 @@ export default function OperationalManagement({ section, profile, userId }: { se
         ])];
         if (ownVehicleIds.length) {
           const { data: ownVehicles, error: ownVehiclesError } = await client.from('vehicles')
-            .select('id, make, model, variant, manufacturing_year, registration_number, business_category, status, purchase_date, purchase_price, expected_sale_price, customer_name, customer_contact')
+            .select('id, make, model, variant, manufacturing_year, registration_number, business_category, status, workflow_stage, purchase_date, purchase_price, expected_sale_price, customer_name, customer_contact')
             .in('id', ownVehicleIds);
           if (ownVehiclesError) throw ownVehiclesError;
           next.vehicles = ownVehicles ?? [];
@@ -201,11 +213,26 @@ export default function OperationalManagement({ section, profile, userId }: { se
   );
   const purchaseRows = filtered(data.vehicles.filter((vehicle) => vehicle.purchase_date), (vehicle) => `${vehicleName(vehicle)} ${vehicle.registration_number ?? ''}`, (vehicle) => vehicle.purchase_date ?? '');
   const salesRows = filtered(data.sales, (sale) => `${sale.customer_name} ${vehicleName(vehicleMap.get(sale.vehicle_id))} ${sale.status}`, (sale) => sale.sale_date);
+  const holdbacksInRange = (transactionType: Holdback['transaction_type']) => data.holdbacks.filter((holdback) => {
+    const date = holdback.created_at.slice(0, 10);
+    const vehicle = vehicleName(vehicleMap.get(holdback.vehicle_id));
+    return holdback.transaction_type === transactionType
+      && (!from || date >= from)
+      && (!to || date <= to)
+      && (!search || `${vehicle} ${holdback.release_condition} ${holdback.transaction_type}`.toLowerCase().includes(search.toLowerCase()));
+  });
+  const purchaseHoldbacks = holdbacksInRange('purchase');
+  const saleHoldbacks = holdbacksInRange('sale');
+  const releasesFor = (rows: Holdback[]) => {
+    const ids = new Set(rows.map((holdback) => holdback.id));
+    return data.holdbackReleases.filter((release) => ids.has(release.holdback_id));
+  };
   const vehicleExpenseRows = filtered(data.vehicleExpenses, (expense) => `${expense.expense_type} ${vehicleName(vehicleMap.get(expense.vehicle_id))} ${expense.notes ?? ''}`, (expense) => expense.expense_date)
     .filter((expense) => expenseCategoryFilter === 'all' || expense.expense_type === expenseCategoryFilter);
   const generalExpenseRows = filtered(data.generalExpenses, (expense) => `${expense.category} ${expense.notes ?? ''}`, (expense) => expense.expense_date)
     .filter((expense) => expenseCategoryFilter === 'all' || expense.category === expenseCategoryFilter);
   const selectedSaleRecord = data.sales.find((sale) => sale.id === selectedSale);
+  const selectedHoldback = data.holdbacks.find((holdback) => holdback.id === holdbackReleaseDraft.holdbackId);
 
   const savePurchase = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -213,15 +240,26 @@ export default function OperationalManagement({ section, profile, userId }: { se
     setSaving(true); setError(''); setNotice('');
     try {
       const price = purchase.category === 'consignment' ? '' : purchase.price;
+      const heldAmount = Number(purchase.heldAmount || 0);
+      if (purchase.photo && (!['image/jpeg', 'image/png', 'image/webp'].includes(purchase.photo.type) || purchase.photo.size > 10 * 1024 * 1024)) {
+        throw new Error('Vehicle photo must be a JPG, PNG, or WebP image no larger than 10 MB.');
+      }
       const totalFunding = fundingDrafts.reduce((sum, item) => sum + Number(item.amount || 0), 0);
       if (purchase.category !== 'consignment' && (!price || totalFunding > Number(price))) {
         throw new Error('Recorded partner/investor funding must not exceed the purchase price.');
       }
+      if (purchase.category !== 'consignment' && (heldAmount < 0 || heldAmount > Number(price))) {
+        throw new Error('The held seller payment must be between zero and the purchase price.');
+      }
+      if (purchase.category !== 'consignment' && heldAmount > 0 && !purchase.releaseCondition.trim()) {
+        throw new Error('Enter the document or condition required before releasing the held seller payment.');
+      }
       if (purchase.category !== 'consignment' && fundingDrafts.some((item) => !item.partyId || Number(item.amount) <= 0 || !item.date)) {
         throw new Error('Each showroom funding contribution needs a contributor, positive amount, and date.');
       }
-      if (purchase.category === 'consignment' && (fundingDrafts.some((item) => Number(item.amount) > 0) || !purchase.customer_name)) {
-        throw new Error('Consignment vehicles cannot have showroom funding or purchase price and need a customer name.');
+      if (purchase.category === 'consignment' && (!purchase.customer_name || Number(purchase.customerMinimum) <= 0
+        || fundingDrafts.some((item) => Number(item.amount) > 0))) {
+        throw new Error('Consignment vehicles need a customer name and positive minimum requirement, and cannot have showroom funding or a purchase price.');
       }
       const contributions = purchase.category === 'consignment' ? [] : fundingDrafts.map((item) => ({
         partner_id: purchase.category === 'partner' ? item.partyId : null,
@@ -238,21 +276,56 @@ export default function OperationalManagement({ section, profile, userId }: { se
         registration_number: purchase.registration,
         purchase_date: purchase.date,
         purchase_price: price,
-        expected_sale_price: '',
+        expected_sale_price: purchase.category === 'consignment' ? Number(purchase.customerMinimum) : '',
         total_additional_costs: 0,
         notes: purchase.notes,
-        status: 'available',
+        status: 'reserved',
+        condition: 'processing',
         customer_name: purchase.category === 'consignment' ? purchase.customer_name : '',
         customer_contact: purchase.category === 'consignment' ? purchase.customer_contact : '',
       };
-      const { error: rpcError } = await supabase.rpc('save_vehicle_with_contributions', {
-        p_vehicle_id: null,
-        p_vehicle: payload,
-        p_contributions: contributions,
-      });
+      const { data: savedVehicleId, error: rpcError } = heldAmount > 0 && purchase.category !== 'consignment'
+        ? await supabase.rpc('create_purchase_with_holdback', {
+          p_vehicle: payload,
+          p_contributions: contributions,
+          p_held_amount: heldAmount,
+          p_release_condition: purchase.releaseCondition.trim(),
+          p_payment_method: purchase.paymentMethod.trim() || null,
+          p_reference_number: purchase.referenceNumber.trim() || null,
+        })
+        : await supabase.rpc('save_vehicle_with_contributions', {
+          p_vehicle_id: null,
+          p_vehicle: payload,
+          p_contributions: contributions,
+        });
       if (rpcError) throw rpcError;
-      setNotice('Purchase vehicle and recorded contributions saved.');
-      setPurchase({ make: '', model: '', variant: '', year: '', registration: '', date: today, price: '', category: 'partner', notes: '', customer_name: '', customer_contact: '' });
+      if (!savedVehicleId) throw new Error('The purchase RPC did not return a vehicle ID.');
+      let photoWarning = '';
+      if (purchase.photo) {
+        const safeName = purchase.photo.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+        const objectPath = `${savedVehicleId}/${crypto.randomUUID()}-${safeName}`;
+        const { error: uploadError } = await supabase.storage.from('vehicle-images').upload(objectPath, purchase.photo, { upsert: false });
+        if (uploadError) {
+          photoWarning = ` Vehicle saved, but its photo could not be uploaded: ${messageOf(uploadError)}`;
+        } else {
+          const { error: metadataError } = await supabase.from('vehicle_files').insert({
+            vehicle_id: savedVehicleId,
+            storage_bucket: 'vehicle-images',
+            object_path: objectPath,
+            file_name: purchase.photo.name,
+            content_type: purchase.photo.type,
+            uploaded_by: userId,
+          });
+          if (metadataError) {
+            const { error: cleanupError } = await supabase.storage.from('vehicle-images').remove([objectPath]);
+            photoWarning = ` Vehicle saved, but its photo record could not be saved: ${messageOf(metadataError)}${cleanupError ? ` The uploaded file cleanup also failed: ${messageOf(cleanupError)}` : ''}`;
+          }
+        }
+      }
+      setNotice(`${heldAmount > 0
+        ? 'Purchase vehicle, recorded contributions, and held seller balance saved.'
+        : 'Purchase vehicle and recorded contributions saved.'}${photoWarning}`);
+      setPurchase({ make: '', model: '', variant: '', year: '', registration: '', date: today, price: '', category: 'partner', notes: '', customer_name: '', customer_contact: '', customerMinimum: '', heldAmount: '0', releaseCondition: '', paymentMethod: '', referenceNumber: '', photo: null });
       setFundingDrafts([{ partyId: '', amount: '', date: today }]);
       refreshData();
     } catch (saveError) {
@@ -268,24 +341,23 @@ export default function OperationalManagement({ section, profile, userId }: { se
     setSaving(true); setError(''); setNotice('');
     try {
       const vehicle = vehicleMap.get(saleDraft.vehicleId);
-      if (!vehicle || vehicle.status !== 'available') throw new Error('Select an available vehicle.');
+      if (!vehicle || vehicle.status !== 'available' || vehicle.workflow_stage !== 'ready_to_sell') throw new Error('Select a vehicle marked Ready to sell.');
       if (!saleDraft.customer.trim() || Number(saleDraft.price) <= 0) throw new Error('Customer name and a positive agreed sale price are required.');
-      const { data: savedSale, error: insertError } = await supabase.from('sales').insert({
-        vehicle_id: vehicle.id,
-        customer_name: saleDraft.customer.trim(),
-        customer_contact: saleDraft.contact || null,
-        sale_date: saleDraft.date,
-        selling_price: Number(saleDraft.price),
-        advance_payment: 0,
-        remaining_balance: Number(saleDraft.price),
-        status: 'pending',
-      }).select('id').single();
-      if (insertError) throw insertError;
-      const { error: auditError } = await supabase.from('audit_logs').insert({
-        actor_id: userId, action_type: 'sale_recorded', entity_type: 'sale', entity_id: savedSale.id,
-        details: { vehicle_id: vehicle.id, sale_date: saleDraft.date, selling_price: Number(saleDraft.price), status: 'pending' },
+      if (data.sales.some((sale) => sale.vehicle_id === vehicle.id && sale.status !== 'cancelled')) {
+        throw new Error('An active sale is already recorded for this vehicle.');
+      }
+      if (vehicle.business_category === 'consignment'
+        && (vehicle.expected_sale_price === null || Number(saleDraft.price) < vehicle.expected_sale_price)) {
+        throw new Error('The sale price cannot be below the recorded customer minimum.');
+      }
+      const { error: saleError } = await supabase.rpc('record_pending_vehicle_sale', {
+        p_vehicle_id: vehicle.id,
+        p_selling_price: Number(saleDraft.price),
+        p_sale_date: saleDraft.date,
+        p_customer_name: saleDraft.customer.trim(),
+        p_customer_contact: saleDraft.contact.trim() || null,
       });
-      if (auditError) throw new Error(`Sale was recorded, but its audit entry could not be saved: ${auditError.message}`);
+      if (saleError) throw saleError;
       setNotice('Sale recorded as pending. Record customer payments separately; an advance does not complete the sale.');
       setSaleDraft({ vehicleId: '', date: today, price: '', customer: '', contact: '' });
       refreshData();
@@ -299,6 +371,10 @@ export default function OperationalManagement({ section, profile, userId }: { se
   const addPayment = async (event: React.FormEvent) => {
     event.preventDefault();
     if (!supabase || !isAdmin || !selectedSaleRecord) return;
+    if (data.holdbacks.some((holdback) => holdback.sale_id === selectedSaleRecord.id)) {
+      setError('This sale has a recorded buyer holdback. Release it from the holdback section so the release is audited and the balance stays synchronized.');
+      return;
+    }
     if (selectedSaleRecord.remaining_balance === null) {
       setError('This sale has no stored balance; a payment cannot be safely validated.');
       return;
@@ -311,22 +387,14 @@ export default function OperationalManagement({ section, profile, userId }: { se
     }
     setSaving(true); setError(''); setNotice('');
     try {
-      const { data: savedPayment, error: paymentError } = await supabase.from('sale_payments').insert({
-        sale_id: selectedSaleRecord.id,
-        amount: paymentAmount,
-        payment_method: paymentDraft.method || null,
-        payment_date: paymentDraft.date,
-        reference_number: paymentDraft.reference || null,
-      }).select('id').single();
-      if (paymentError) throw paymentError;
-      const remaining = balance - paymentAmount;
-      const { error: balanceError } = await supabase.from('sales').update({ remaining_balance: remaining }).eq('id', selectedSaleRecord.id);
-      if (balanceError) throw new Error(`Payment was recorded, but the sale balance could not be updated: ${balanceError.message}`);
-      const { error: auditError } = await supabase.from('audit_logs').insert({
-        actor_id: userId, action_type: 'customer_payment_recorded', entity_type: 'sale_payment', entity_id: savedPayment.id,
-        details: { sale_id: selectedSaleRecord.id, amount: paymentAmount, remaining_balance: remaining },
+      const { error: paymentError } = await supabase.rpc('record_vehicle_sale_payment', {
+        p_sale_id: selectedSaleRecord.id,
+        p_amount: paymentAmount,
+        p_payment_date: paymentDraft.date,
+        p_payment_method: paymentDraft.method.trim() || null,
+        p_reference_number: paymentDraft.reference.trim() || null,
       });
-      if (auditError) throw new Error(`Payment and sale balance were recorded, but its audit entry could not be saved: ${auditError.message}`);
+      if (paymentError) throw paymentError;
       setNotice('Customer payment recorded and stored balance updated. Sale status was not changed.');
       setPaymentDraft({ amount: '', date: today, method: '', reference: '' });
       refreshData();
@@ -352,29 +420,64 @@ export default function OperationalManagement({ section, profile, userId }: { se
       setError('A sale cannot be completed while its stored balance is unavailable.');
       return;
     }
+    if (status === 'cancelled' && (Number(sale.advance_payment ?? 0) > 0
+      || data.salePayments.some((payment) => payment.sale_id === sale.id)
+      || Number(sale.remaining_balance ?? sale.selling_price) !== Number(sale.selling_price))) {
+      setError('A sale with recorded customer payments cannot be cancelled until an audited refund workflow is available.');
+      return;
+    }
     if (status === 'cancelled' && !window.confirm('Cancel this sale? The existing record and payment history will remain unchanged.')) return;
     setSaving(true); setError(''); setNotice('');
-    const { error: updateError } = await supabase.from('sales').update({ status }).eq('id', sale.id);
-    if (updateError) setError(updateError.message);
-    else {
+    try {
       if (status === 'completed') {
-        const { error: vehicleError } = await supabase.from('vehicles').update({ status: 'sold' }).eq('id', sale.vehicle_id);
-        if (vehicleError) {
-          setError(`Sale was marked completed, but the vehicle could not be marked sold: ${vehicleError.message}`);
-          refreshData();
-          setSaving(false);
-          return;
-        }
+        const { error: completionError } = await supabase.rpc('complete_pending_vehicle_sale', { p_sale_id: sale.id });
+        if (completionError) throw completionError;
+      } else {
+        const { error: cancelError } = await supabase.rpc('cancel_pending_vehicle_sale', { p_sale_id: sale.id });
+        if (cancelError) throw cancelError;
       }
-      const { error: auditError } = await supabase.from('audit_logs').insert({
-        actor_id: userId, action_type: 'sale_status_updated', entity_type: 'sale', entity_id: sale.id,
-        details: { previous_status: sale.status, status },
-      });
-      if (auditError) setError(`Sale status updated, but its audit entry could not be saved: ${auditError.message}`);
-      else setNotice(`Sale status updated to ${status}.`);
+      setNotice(status === 'completed'
+        ? 'Sale completed, vehicle marked sold, and approved profit calculation recorded.'
+        : `Sale status updated to ${status}.`);
       refreshData();
+    } catch (statusError) {
+      setError(messageOf(statusError));
     }
     setSaving(false);
+  };
+
+  const releaseHoldback = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!supabase || !isAdmin || !selectedHoldback) return;
+    const releaseAmount = Number(holdbackReleaseDraft.amount);
+    const remaining = Number(selectedHoldback.held_amount) - Number(selectedHoldback.released_amount);
+    if (releaseAmount <= 0 || releaseAmount > remaining) {
+      setError(`Release amount must be positive and no greater than the remaining held balance (${amount(remaining)}).`);
+      return;
+    }
+    if (!holdbackReleaseDraft.conditionConfirmed || !holdbackReleaseDraft.notes.trim()) {
+      setError('Confirm the release condition is met and record how it was verified.');
+      return;
+    }
+    setSaving(true); setError(''); setNotice('');
+    try {
+      const { error: rpcError } = await supabase.rpc('release_vehicle_payment_holdback', {
+        p_holdback_id: selectedHoldback.id,
+        p_amount: releaseAmount,
+        p_payment_date: holdbackReleaseDraft.date,
+        p_payment_method: holdbackReleaseDraft.method.trim() || null,
+        p_reference_number: holdbackReleaseDraft.reference.trim() || null,
+        p_notes: `Release condition verified: ${holdbackReleaseDraft.notes.trim()}`,
+      });
+      if (rpcError) throw rpcError;
+      setNotice('Held payment released and audit entry recorded.');
+      setHoldbackReleaseDraft({ holdbackId: '', amount: '', date: today, method: '', reference: '', notes: '', conditionConfirmed: false });
+      refreshData();
+    } catch (releaseError) {
+      setError(messageOf(releaseError));
+    } finally {
+      setSaving(false);
+    }
   };
 
   const saveExpense = async (event: React.FormEvent) => {
@@ -440,11 +543,11 @@ export default function OperationalManagement({ section, profile, userId }: { se
     finance: 'Finance ledger', profit: 'Profit management',
   };
   const subtitles: Record<Section, string> = {
-    purchases: 'Recorded vehicle purchases and partner or investor contributions.',
-    sales: 'Recorded vehicle sales, customer payments, and balances.',
+    purchases: 'Recorded vehicle purchases, partner or investor contributions, and seller payment holdbacks.',
+    sales: 'Recorded vehicle sales, customer payments, buyer holdbacks, and outstanding balances.',
     expenses: 'Vehicle-specific and general showroom expenses.',
     finance: 'Separate recorded cash movement sources. This is not a reconciled cash balance.',
-    profit: 'Approved calculations and distribution records only; no profit is calculated or posted here.',
+    profit: 'Super Admin-approved profit calculations created transactionally when a vehicle sale is completed.',
   };
 
   if (accessError) {
@@ -465,17 +568,18 @@ export default function OperationalManagement({ section, profile, userId }: { se
       {section === 'purchases' && <>
         {isAdmin && <section className="glass-panel panel-section operational-form-panel">
           <h3>Record purchase vehicle</h3>
-          <p className="operational-note">Uses the existing audited vehicle-and-contributions RPC. Mixed contributor types and third-party funding are not supported by the current database function.</p>
+          <p className="operational-note">Vehicle and funding data are saved transactionally. Seller payment holdbacks are optional; mixed contributor types and third-party funding are not supported.</p>
           <form className="operational-form" onSubmit={(event) => void savePurchase(event)}>
-            <label>Vehicle category<select value={purchase.category} onChange={(event) => { setPurchase({ ...purchase, category: event.target.value, customer_name: '' }); setFundingDrafts([{ partyId: '', amount: '', date: today }]); }}><option value="partner">TrueLine Partner Car</option><option value="investor">TrueLine Investor Car</option><option value="consignment">Customer Consignment Car</option></select></label>
+            <label>Vehicle category<select value={purchase.category} onChange={(event) => { setPurchase({ ...purchase, category: event.target.value, customer_name: '', customerMinimum: '', heldAmount: '0' }); setFundingDrafts([{ partyId: '', amount: '', date: today }]); }}><option value="partner">TrueLine Partner Car</option><option value="investor">TrueLine Investor Car</option></select></label>
             <label>Make<input required value={purchase.make} onChange={(event) => setPurchase({ ...purchase, make: event.target.value })} /></label>
             <label>Model<input required value={purchase.model} onChange={(event) => setPurchase({ ...purchase, model: event.target.value })} /></label>
             <label>Variant<input value={purchase.variant} onChange={(event) => setPurchase({ ...purchase, variant: event.target.value })} /></label>
-            <label>Manufacturing year<input type="number" min="1900" max="2100" value={purchase.year} onChange={(event) => setPurchase({ ...purchase, year: event.target.value })} /></label>
+            <label>Model year<input type="number" min="1900" max="2100" value={purchase.year} onChange={(event) => setPurchase({ ...purchase, year: event.target.value })} /></label>
             <label>Registration<input value={purchase.registration} onChange={(event) => setPurchase({ ...purchase, registration: event.target.value })} /></label>
+            <label>Vehicle photo<input type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => setPurchase({ ...purchase, photo: event.target.files?.[0] ?? null })} /></label>
             <label>Purchase date<input type="date" required value={purchase.date} onChange={(event) => setPurchase({ ...purchase, date: event.target.value })} /></label>
             {purchase.category !== 'consignment' && <label>Purchase price<input type="number" min="0.01" step="0.01" required value={purchase.price} onChange={(event) => setPurchase({ ...purchase, price: event.target.value })} /></label>}
-            {purchase.category === 'consignment' && <><label>Customer name<input required value={purchase.customer_name} onChange={(event) => setPurchase({ ...purchase, customer_name: event.target.value })} /></label><label>Customer contact<input value={purchase.customer_contact} onChange={(event) => setPurchase({ ...purchase, customer_contact: event.target.value })} /></label></>}
+            {purchase.category === 'consignment' && <><label>Customer name<input required value={purchase.customer_name} onChange={(event) => setPurchase({ ...purchase, customer_name: event.target.value })} /></label><label>Customer contact<input value={purchase.customer_contact} onChange={(event) => setPurchase({ ...purchase, customer_contact: event.target.value })} /></label><label>Customer minimum<input type="number" min="0.01" step="0.01" required value={purchase.customerMinimum} onChange={(event) => setPurchase({ ...purchase, customerMinimum: event.target.value })} /></label></>}
             {purchase.category !== 'consignment' && <div className="operational-form-wide">
               <h4>Funding contributions</h4>
               {fundingDrafts.map((draft, index) => {
@@ -490,6 +594,16 @@ export default function OperationalManagement({ section, profile, userId }: { se
               <button type="button" className="ghost-button" onClick={() => setFundingDrafts([...fundingDrafts, { partyId: '', amount: '', date: today }])}>Add contributor</button>
               <p className="funding-total">Recorded contributions: {amount(fundingDrafts.reduce((sum, item) => sum + Number(item.amount || 0), 0))} · Unfunded purchase amount: {amount(Math.max(0, Number(purchase.price || 0) - fundingDrafts.reduce((sum, item) => sum + Number(item.amount || 0), 0)))}</p>
             </div>}
+            {purchase.category !== 'consignment' && <div className="operational-form-wide">
+              <h4>Seller payment holdback (optional)</h4>
+              <p className="operational-note">The held amount is part of the purchase price and can be released later by a Super Admin after the recorded condition is met.</p>
+              <label>Held amount<input type="number" min="0" max={purchase.price || undefined} step="0.01" value={purchase.heldAmount} onChange={(event) => setPurchase({ ...purchase, heldAmount: event.target.value })} /></label>
+              {Number(purchase.heldAmount) > 0 && <>
+                <label>Release condition<input required value={purchase.releaseCondition} onChange={(event) => setPurchase({ ...purchase, releaseCondition: event.target.value })} /></label>
+                <label>Initial payment method<input value={purchase.paymentMethod} onChange={(event) => setPurchase({ ...purchase, paymentMethod: event.target.value })} /></label>
+                <label>Initial payment reference<input value={purchase.referenceNumber} onChange={(event) => setPurchase({ ...purchase, referenceNumber: event.target.value })} /></label>
+              </>}
+            </div>}
             <label className="operational-form-wide">Notes<textarea rows={2} value={purchase.notes} onChange={(event) => setPurchase({ ...purchase, notes: event.target.value })} /></label>
             <button type="submit" className="primary-button" disabled={saving}>{saving ? 'Saving…' : 'Record purchase'}</button>
           </form>
@@ -503,6 +617,17 @@ export default function OperationalManagement({ section, profile, userId }: { se
           })}
           {!loading && !purchaseRows.length && <EmptyRow columns={7} />}
         </tbody></table></div><p className="operational-note">*Based only on partner/investor contribution rows; the schema does not link third-party sources to purchases.</p></section>
+        <HoldbackManagement
+          title="Seller payment holdbacks"
+          rows={purchaseHoldbacks}
+          releases={releasesFor(purchaseHoldbacks)}
+          vehicles={vehicleMap}
+          isAdmin={isAdmin}
+          saving={saving}
+          draft={holdbackReleaseDraft}
+          setDraft={setHoldbackReleaseDraft}
+          onSubmit={releaseHoldback}
+        />
       </>}
 
       {section === 'sales' && <>
@@ -522,12 +647,12 @@ export default function OperationalManagement({ section, profile, userId }: { se
           <h3>Record customer payment</h3>
           <form className="operational-form" onSubmit={(event) => void addPayment(event)}>
             <label>Sale<select required value={selectedSale} onChange={(event) => setSelectedSale(event.target.value)}><option value="">Select pending or active sale</option>{data.sales.filter((sale) => sale.status !== 'cancelled').map((sale) => <option value={sale.id} key={sale.id}>{sale.customer_name} · {vehicleName(vehicleMap.get(sale.vehicle_id))} · balance {amount(sale.remaining_balance)}</option>)}</select></label>
-            {selectedSaleRecord && <p className="operational-note">Stored outstanding balance: {amount(selectedSaleRecord.remaining_balance)}. Payment rows and advance fields are not combined because historical duplication is not defined.</p>}
+            {selectedSaleRecord && <p className="operational-note">Stored outstanding balance: {amount(selectedSaleRecord.remaining_balance)}. {data.holdbacks.some((holdback) => holdback.sale_id === selectedSaleRecord.id) ? 'This sale has a holdback; use the audited release form below instead of recording a regular payment.' : 'Payment rows and advance fields are not combined because historical duplication is not defined.'}</p>}
             <label>Payment amount<input required type="number" min="0.01" step="0.01" max={selectedSaleRecord?.remaining_balance ?? undefined} value={paymentDraft.amount} onChange={(event) => setPaymentDraft({ ...paymentDraft, amount: event.target.value })} /></label>
             <label>Payment date<input required type="date" value={paymentDraft.date} onChange={(event) => setPaymentDraft({ ...paymentDraft, date: event.target.value })} /></label>
             <label>Payment method<input value={paymentDraft.method} onChange={(event) => setPaymentDraft({ ...paymentDraft, method: event.target.value })} /></label>
             <label>Reference<input value={paymentDraft.reference} onChange={(event) => setPaymentDraft({ ...paymentDraft, reference: event.target.value })} /></label>
-            <button type="submit" className="primary-button" disabled={saving || !selectedSaleRecord}>{saving ? 'Saving…' : 'Record payment'}</button>
+            <button type="submit" className="primary-button" disabled={saving || !selectedSaleRecord || data.holdbacks.some((holdback) => holdback.sale_id === selectedSaleRecord.id)}>{saving ? 'Saving…' : 'Record payment'}</button>
           </form>
         </section>}
         <OperationalFilters search={search} setSearch={setSearch} from={from} setFrom={setFrom} to={to} setTo={setTo} />
@@ -538,6 +663,17 @@ export default function OperationalManagement({ section, profile, userId }: { se
           {data.salePayments.filter((payment) => payment.sale_id === selectedSale).map((payment) => <tr key={payment.id}><td>{payment.payment_date}</td><td>{amount(payment.amount)}</td><td>{payment.payment_method || 'Not recorded'}</td><td>{payment.reference_number || 'Not recorded'}</td></tr>)}
           {!!selectedSale && !data.salePayments.some((payment) => payment.sale_id === selectedSale) && <EmptyRow columns={4} />}
         </tbody></table></div></section>
+        <HoldbackManagement
+          title="Buyer payment holdbacks"
+          rows={saleHoldbacks}
+          releases={releasesFor(saleHoldbacks)}
+          vehicles={vehicleMap}
+          isAdmin={isAdmin}
+          saving={saving}
+          draft={holdbackReleaseDraft}
+          setDraft={setHoldbackReleaseDraft}
+          onSubmit={releaseHoldback}
+        />
       </>}
 
       {section === 'expenses' && <>
@@ -584,6 +720,60 @@ function EmptyRow({ columns }: { columns: number }) {
 
 function Metric({ label, value }: { label: string; value: string }) {
   return <article className="executive-kpi glass-panel"><span>{label}</span><strong>{value}</strong></article>;
+}
+
+function HoldbackManagement({ title, rows, releases, vehicles, isAdmin, saving, draft, setDraft, onSubmit }: {
+  title: string;
+  rows: Holdback[];
+  releases: HoldbackRelease[];
+  vehicles: Map<string, Vehicle>;
+  isAdmin: boolean;
+  saving: boolean;
+  draft: HoldbackReleaseDraft;
+  setDraft: React.Dispatch<React.SetStateAction<HoldbackReleaseDraft>>;
+  onSubmit: (event: React.FormEvent) => void;
+}) {
+  const selected = rows.find((holdback) => holdback.id === draft.holdbackId);
+  return <section className="glass-panel panel-section">
+    <h3>{title}</h3>
+    <p className="operational-note">Held payments remain outstanding until a Super Admin confirms the recorded condition and releases the amount. Partial releases are supported and audited.</p>
+    <div className="table-scroll"><table className="data-table"><thead><tr><th>Vehicle</th><th>Deal amount</th><th>Paid initially</th><th>Held</th><th>Released</th><th>Remaining</th><th>Release condition</th><th>Status</th>{isAdmin && <th>Action</th>}</tr></thead><tbody>
+      {rows.map((holdback) => {
+        const remaining = Number(holdback.held_amount) - Number(holdback.released_amount);
+        return <tr key={holdback.id}>
+          <td><Link to={`/inventory/${holdback.vehicle_id}`}>{vehicleName(vehicles.get(holdback.vehicle_id))}</Link></td>
+          <td>{amount(holdback.deal_amount)}</td>
+          <td>{amount(holdback.paid_at_start)}</td>
+          <td>{amount(holdback.held_amount)}</td>
+          <td>{amount(holdback.released_amount)}</td>
+          <td>{amount(remaining)}</td>
+          <td>{holdback.release_condition}</td>
+          <td>{remaining > 0 ? 'Outstanding' : 'Released'}</td>
+          {isAdmin && <td><button type="button" className="ghost-button" disabled={saving || remaining <= 0} onClick={() => setDraft({ holdbackId: holdback.id, amount: String(remaining), date: today, method: '', reference: '', notes: '', conditionConfirmed: false })}>{remaining > 0 ? 'Prepare release' : 'Fully released'}</button></td>}
+        </tr>;
+      })}
+      {!rows.length && <EmptyRow columns={isAdmin ? 9 : 8} />}
+    </tbody></table></div>
+    {isAdmin && selected && <form className="operational-form operational-holdback-form" onSubmit={onSubmit}>
+      <h4 className="operational-form-wide">Release held payment: {vehicleName(vehicles.get(selected.vehicle_id))}</h4>
+      <p className="operational-note operational-form-wide">Condition: {selected.release_condition} · Remaining: {amount(Number(selected.held_amount) - Number(selected.released_amount))}</p>
+      <label>Release amount<input type="number" min="0.01" max={Number(selected.held_amount) - Number(selected.released_amount)} step="0.01" required value={draft.amount} onChange={(event) => setDraft({ ...draft, amount: event.target.value })} /></label>
+      <label>Payment date<input type="date" required value={draft.date} onChange={(event) => setDraft({ ...draft, date: event.target.value })} /></label>
+      <label>Payment method<input value={draft.method} onChange={(event) => setDraft({ ...draft, method: event.target.value })} /></label>
+      <label>Reference<input value={draft.reference} onChange={(event) => setDraft({ ...draft, reference: event.target.value })} /></label>
+      <label className="operational-form-wide">Verification notes<textarea rows={2} required value={draft.notes} onChange={(event) => setDraft({ ...draft, notes: event.target.value })} /></label>
+      <label className="operational-form-wide operational-checkbox"><input type="checkbox" required checked={draft.conditionConfirmed} onChange={(event) => setDraft({ ...draft, conditionConfirmed: event.target.checked })} /> I confirm the recorded release condition has been met.</label>
+      <button type="submit" className="primary-button" disabled={saving || !draft.conditionConfirmed}>{saving ? 'Releasing…' : 'Release payment'}</button>
+    </form>}
+    <h4>Release history</h4>
+    <div className="table-scroll"><table className="data-table"><thead><tr><th>Date</th><th>Vehicle</th><th>Amount</th><th>Method</th><th>Reference</th><th>Verification notes</th></tr></thead><tbody>
+      {releases.map((release) => {
+        const holdback = rows.find((item) => item.id === release.holdback_id);
+        return <tr key={release.id}><td>{release.payment_date}</td><td>{vehicleName(vehicles.get(holdback?.vehicle_id ?? ''))}</td><td>{amount(release.amount)}</td><td>{release.payment_method || 'Not recorded'}</td><td>{release.reference_number || 'Not recorded'}</td><td>{release.notes || '—'}</td></tr>;
+      })}
+      {!releases.length && <EmptyRow columns={6} />}
+    </tbody></table></div>
+  </section>;
 }
 
 function ExpenseTable({ rows, vehicles }: { rows: VehicleExpense[]; vehicles: Map<string, Vehicle> }) {

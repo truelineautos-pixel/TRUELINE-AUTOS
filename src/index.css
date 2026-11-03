@@ -2564,6 +2564,7 @@ button:disabled {
 }
 
 .operational-form > label,
+.operational-form-wide > label,
 .operational-funding-row > label {
   display: grid;
   gap: 0.4rem;
@@ -2598,6 +2599,23 @@ button:disabled {
 .operational-form-panel h4 {
   margin: 0 0 0.6rem;
   color: #f0d48f;
+}
+
+.operational-holdback-form {
+  border-top: 1px solid rgba(148, 183, 217, 0.14);
+  padding-top: 1rem;
+}
+
+.operational-checkbox {
+  display: flex !important;
+  align-items: center;
+  gap: 0.6rem !important;
+}
+
+.operational-form .operational-checkbox input {
+  width: 18px;
+  min-height: 18px;
+  accent-color: #e8c66f;
 }
 
 .operational-funding-row {
