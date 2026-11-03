@@ -1,0 +1,17 @@
+{
+  "name": "TRUELINE AUTOS",
+  "short_name": "TrueLine",
+  "description": "Smart showroom management system for inventory, funding, sales, and profit operations.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#020817",
+  "theme_color": "#0f172a",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
