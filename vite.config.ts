@@ -9,7 +9,15 @@ export default defineConfig({
       registerType: 'autoUpdate',
       includeAssets: ['favicon.svg', 'apple-touch-icon.png'],
       workbox: {
-        globIgnores: ['**/SalesExpenseChart-*.js'],
+        globIgnores: [
+          '**/SalesExpenseChart-*.js',
+          '**/ReportsCenter-*.js',
+          '**/jspdf*.js',
+          '**/jspdf.plugin.*.js',
+          '**/html2canvas-*.js',
+          '**/purify.es-*.js',
+          '**/index.es-*.js',
+        ],
       },
       manifest: {
         name: 'TrueLine Autos',

@@ -1,5 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react';
-import { Route, Routes, NavLink, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
+import { Link, Route, Routes, NavLink, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import type { Session } from '@supabase/supabase-js';
 import {
   BriefcaseBusiness,
@@ -14,7 +14,6 @@ import {
   ReceiptText,
   Search,
   Settings,
-  ShieldCheck,
   Sparkles,
   TrendingUp,
   UserRoundCheck,
@@ -22,8 +21,12 @@ import {
   X,
 } from 'lucide-react';
 import { supabase, supabaseConfigError } from './lib/supabase';
+import VehicleCard from './components/VehicleCard';
 
-const SalesExpenseChart = lazy(() => import('./components/SalesExpenseChart'));
+const VehicleProfileView = lazy(() => import('./components/VehicleProfileView'));
+const ExecutiveDashboard = lazy(() => import('./components/ExecutiveDashboard'));
+const OperationalManagement = lazy(() => import('./components/OperationalManagement'));
+const ReportsCenter = lazy(() => import('./components/ReportsCenter'));
 
 type NavItem = {
   key: string;
@@ -86,11 +89,6 @@ const defaultBackground: BackgroundSettings = {
   opacity: 0.68,
 };
 
-const defaultDashboardMonth = (() => {
-  const date = new Date();
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
-})();
-const dashboardDateLabel = new Date().toLocaleDateString(undefined, { dateStyle: 'medium' });
 
 function formatOperationError(error: unknown): string {
   if (error instanceof Error) return error.message;
@@ -411,16 +409,17 @@ function App() {
         </header>
 
         <Routes>
-          <Route path="/" element={<DashboardView profile={profile} />} />
+          <Route path="/" element={<Suspense fallback={<div className="page-shell"><p className="muted" role="status">Loading executive dashboard...</p></div>}><ExecutiveDashboard profile={profile} /></Suspense>} />
           <Route path="/inventory" element={<InventoryView key={location.search} profile={profile} userId={session.user.id} />} />
-          <Route path="/purchases" element={<PurchaseView />} />
-          <Route path="/sales" element={<SalesView />} />
+          <Route path="/inventory/:vehicleId" element={<Suspense fallback={<div className="page-shell"><p className="muted" role="status">Loading vehicle profile...</p></div>}><VehicleProfileView profile={profile} /></Suspense>} />
+          <Route path="/purchases" element={<Suspense fallback={<div className="page-shell"><p className="muted" role="status">Loading purchases...</p></div>}><OperationalManagement section="purchases" profile={profile} userId={session.user.id} /></Suspense>} />
+          <Route path="/sales" element={<Suspense fallback={<div className="page-shell"><p className="muted" role="status">Loading sales...</p></div>}><OperationalManagement section="sales" profile={profile} userId={session.user.id} /></Suspense>} />
           <Route path="/partners" element={<PartnersView />} />
           <Route path="/investors" element={<InvestorsView />} />
-          <Route path="/finance" element={<FinanceView />} />
-          <Route path="/profit" element={<ProfitView />} />
-          <Route path="/expenses" element={<ExpensesView />} />
-          <Route path="/reports" element={<ReportsView />} />
+          <Route path="/finance" element={<Suspense fallback={<div className="page-shell"><p className="muted" role="status">Loading finance...</p></div>}><OperationalManagement section="finance" profile={profile} userId={session.user.id} /></Suspense>} />
+          <Route path="/profit" element={<Suspense fallback={<div className="page-shell"><p className="muted" role="status">Loading profit records...</p></div>}><OperationalManagement section="profit" profile={profile} userId={session.user.id} /></Suspense>} />
+          <Route path="/expenses" element={<Suspense fallback={<div className="page-shell"><p className="muted" role="status">Loading expenses...</p></div>}><OperationalManagement section="expenses" profile={profile} userId={session.user.id} /></Suspense>} />
+          <Route path="/reports" element={<Suspense fallback={<div className="page-shell"><p className="muted" role="status">Loading reports...</p></div>}><ReportsCenter profile={profile} /></Suspense>} />
           <Route path="/ai" element={<AiView />} />
           <Route path="/settings" element={<SettingsView profile={profile} background={background} onChange={handleBackgroundChange} showControls={showBackgroundControls} setShowControls={setShowBackgroundControls} />} />
         </Routes>
@@ -533,461 +532,6 @@ function LoginView({
   );
 }
 
-type DashboardSale = { id: string; sale_date: string; selling_price: number; remaining_balance: number; customer_name: string; status: string; vehicle_id: string };
-type DashboardPartnerFunding = { partner_id: string; amount: number };
-type DashboardInvestorFunding = { investor_id: string; amount: number };
-type DashboardExpense = { amount: number; expense_date: string };
-type DashboardSalePayment = { amount: number; payment_date: string };
-type DashboardParty = { id: string; name: string };
-type DashboardTransaction = { id: string; transaction_type: string; amount: number; status: string; created_at: string };
-type DashboardVehicle = { id: string; business_category: string; make: string; model: string; manufacturing_year: number | null; purchase_date: string | null; purchase_price: number | null; status: string; days_in_stock?: number };
-function DashboardView({ profile }: { profile: Profile }) {
-  const [selectedMonth, setSelectedMonth] = useState(defaultDashboardMonth);
-  const [refreshKey, setRefreshKey] = useState(0);
-  const [dashboardData, setDashboardData] = useState<{
-    inventory: { available_count: number; showroom_cost_value: number };
-    sales: DashboardSale[];
-    salePayments: DashboardSalePayment[];
-    purchaseCount: number;
-    vehicleExpenses: DashboardExpense[];
-    generalExpenses: DashboardExpense[];
-    partners: DashboardParty[];
-    investors: DashboardParty[];
-    partnerFunding: DashboardPartnerFunding[];
-    investorFunding: DashboardInvestorFunding[];
-    transactions: DashboardTransaction[];
-    purchases: DashboardVehicle[];
-    slowInventory: DashboardVehicle[];
-    outstandingSales: DashboardSale[];
-    reserveBalances: number[];
-    investor: { invested_capital: number; funded_vehicle_count: number; recorded_distributions: number; recorded_payments: number };
-  }>({
-    inventory: { available_count: 0, showroom_cost_value: 0 },
-    sales: [],
-    salePayments: [],
-    purchaseCount: 0,
-    vehicleExpenses: [],
-    generalExpenses: [],
-    partners: [],
-    investors: [],
-    partnerFunding: [],
-    investorFunding: [],
-    transactions: [],
-    purchases: [],
-    slowInventory: [],
-    outstandingSales: [],
-    reserveBalances: [],
-    investor: { invested_capital: 0, funded_vehicle_count: 0, recorded_distributions: 0, recorded_payments: 0 },
-  });
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
-
-  useEffect(() => {
-    const client = supabase;
-    if (!client) {
-      setLoading(false);
-      setError(supabaseConfigError ?? 'Supabase is unavailable.');
-      return;
-    }
-
-    let mounted = true;
-    const [year, month] = selectedMonth.split('-').map(Number);
-    const periodStart = new Date(year, month - 1, 1);
-    const periodEnd = new Date(year, month, 1);
-    const trendStart = new Date(year, month - 12, 1);
-    const dateString = (date: Date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
-    const historyFrom = dateString(trendStart);
-    const periodTo = dateString(periodEnd);
-    setLoading(true);
-    setError('');
-
-    void (async () => {
-      try {
-        const transactionPromise = client.from('financial_transactions')
-          .select('id, transaction_type, amount, status, created_at')
-          .order('created_at', { ascending: false })
-          .limit(5);
-
-        if (profile.role === 'investor') {
-          const [investorSummaryResult, transactions] = await Promise.all([
-            client.rpc('dashboard_current_investor_summary'),
-            transactionPromise,
-          ]);
-          if (investorSummaryResult.error) throw new Error(investorSummaryResult.error.message);
-          if (transactions.error) throw new Error(transactions.error.message);
-          if (!mounted) return;
-          setDashboardData((current) => ({
-            ...current,
-            transactions: (transactions.data ?? []) as DashboardTransaction[],
-            investor: (investorSummaryResult.data?.[0] ?? {
-              invested_capital: 0,
-              funded_vehicle_count: 0,
-              recorded_distributions: 0,
-              recorded_payments: 0,
-            }) as { invested_capital: number; funded_vehicle_count: number; recorded_distributions: number; recorded_payments: number },
-          }));
-          return;
-        }
-
-        const [inventoryResult, sales, salePayments, purchaseCountResult, vehicleExpenses, generalExpenses, partnersResult, investorsResult, partnerFundingResult, investorFundingResult, transactions, purchasesResult, slowInventoryResult, outstandingSales, reserveResult] = await Promise.all([
-          client.rpc('dashboard_inventory_summary'),
-          fetchPagedRows<DashboardSale>((from, to) => client.from('sales')
-            .select('id, sale_date, selling_price, remaining_balance, customer_name, status, vehicle_id')
-            .eq('status', 'completed')
-            .gte('sale_date', historyFrom)
-            .lt('sale_date', periodTo)
-            .order('sale_date', { ascending: false })
-            .range(from, to)),
-          fetchPagedRows<DashboardSalePayment>((from, to) => client.from('sale_payments')
-            .select('amount, payment_date')
-            .gte('payment_date', dateString(trendStart))
-            .lt('payment_date', periodTo)
-            .range(from, to)),
-          client.from('vehicles')
-            .select('id', { count: 'exact', head: true })
-            .neq('business_category', 'consignment')
-            .gte('purchase_date', dateString(periodStart))
-            .lt('purchase_date', periodTo),
-          fetchPagedRows<DashboardExpense>((from, to) => client.from('vehicle_expenses')
-            .select('amount, expense_date')
-            .gte('expense_date', historyFrom)
-            .lt('expense_date', periodTo)
-            .range(from, to)),
-          fetchPagedRows<DashboardExpense>((from, to) => client.from('general_expenses')
-            .select('amount, expense_date')
-            .gte('expense_date', historyFrom)
-            .lt('expense_date', periodTo)
-            .range(from, to)),
-          client.from('partners').select('id, name').order('name'),
-          client.from('investors').select('id, name').order('name'),
-          client.rpc('dashboard_partner_funding_summary'),
-          client.rpc('dashboard_investor_funding_summary'),
-          transactionPromise,
-          client.from('vehicles')
-            .select('id, business_category, make, model, manufacturing_year, purchase_date, purchase_price, status')
-            .neq('business_category', 'consignment')
-            .not('purchase_date', 'is', null)
-            .order('purchase_date', { ascending: false })
-            .limit(5),
-          client.from('vehicles')
-            .select('id, business_category, make, model, manufacturing_year, purchase_date, purchase_price, status')
-            .eq('status', 'available')
-            .neq('business_category', 'consignment')
-            .not('purchase_date', 'is', null)
-            .lt('purchase_date', dateString(new Date(Date.now() - 90 * 24 * 60 * 60 * 1000)))
-            .order('purchase_date')
-            .limit(5),
-          fetchPagedRows<DashboardSale>((from, to) => client.from('sales')
-            .select('id, sale_date, selling_price, remaining_balance, customer_name, status, vehicle_id')
-            .gt('remaining_balance', 0)
-            .order('sale_date')
-            .range(from, to)),
-          client.from('showroom_reserves').select('current_balance'),
-        ]);
-        const failures = [
-          inventoryResult.error,
-          partnersResult.error,
-          investorsResult.error,
-          partnerFundingResult.error,
-          investorFundingResult.error,
-          purchaseCountResult.error,
-          purchasesResult.error,
-          slowInventoryResult.error,
-          reserveResult.error,
-          transactions.error,
-        ].filter((item): item is NonNullable<typeof item> => Boolean(item));
-        if (failures.length) throw new Error(failures.map((item) => item.message).join('; '));
-        if (!mounted) return;
-        setDashboardData({
-          inventory: (inventoryResult.data?.[0] ?? { available_count: 0, showroom_cost_value: 0 }) as { available_count: number; showroom_cost_value: number },
-          sales,
-          salePayments,
-          purchaseCount: purchaseCountResult.count ?? 0,
-          vehicleExpenses,
-          generalExpenses,
-          partners: (partnersResult.data ?? []) as DashboardParty[],
-          investors: (investorsResult.data ?? []) as DashboardParty[],
-          partnerFunding: (partnerFundingResult.data ?? []) as DashboardPartnerFunding[],
-          investorFunding: (investorFundingResult.data ?? []) as DashboardInvestorFunding[],
-          transactions: (transactions.data ?? []) as DashboardTransaction[],
-          purchases: (purchasesResult.data ?? []) as DashboardVehicle[],
-          slowInventory: ((slowInventoryResult.data ?? []) as DashboardVehicle[]).map((vehicle) => ({
-            ...vehicle,
-            days_in_stock: vehicle.purchase_date
-              ? Math.floor((Date.now() - new Date(`${vehicle.purchase_date}T00:00:00`).getTime()) / (24 * 60 * 60 * 1000))
-              : undefined,
-          })),
-          outstandingSales,
-          reserveBalances: ((reserveResult.data ?? []) as { current_balance: number }[]).map((item) => Number(item.current_balance || 0)),
-          investor: { invested_capital: 0, funded_vehicle_count: 0, recorded_distributions: 0, recorded_payments: 0 },
-        });
-      } catch (loadError) {
-        if (mounted) setError(formatOperationError(loadError));
-      } finally {
-        if (mounted) setLoading(false);
-      }
-    })();
-
-    return () => { mounted = false; };
-  }, [profile.role, refreshKey, selectedMonth]);
-
-  const [year, month] = selectedMonth.split('-').map(Number);
-  const currency = import.meta.env.VITE_DEFAULT_CURRENCY || 'PKR';
-  const formatMoney = (value: number) => `${currency} ${Math.round(value).toLocaleString()}`;
-  const periodSales = useMemo(
-    () => dashboardData.sales.filter((sale) => sale.sale_date.startsWith(selectedMonth)),
-    [dashboardData.sales, selectedMonth],
-  );
-  const monthlySales = useMemo(() => {
-    const totals = new Map<string, number>();
-    for (const sale of dashboardData.sales) {
-      const monthKey = sale.sale_date.slice(0, 7);
-      totals.set(monthKey, (totals.get(monthKey) ?? 0) + Number(sale.selling_price || 0));
-    }
-    return Array.from({ length: 12 }, (_, index) => {
-      const date = new Date(year, month - 12 + index, 1);
-      const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
-      return { key: monthKey, label: date.toLocaleString(undefined, { month: 'short' }), total: totals.get(monthKey) ?? 0 };
-    });
-  }, [dashboardData.sales, month, year]);
-  const monthlyExpenses = useMemo(() => {
-    const totals = new Map<string, number>();
-    for (const item of [...dashboardData.vehicleExpenses, ...dashboardData.generalExpenses]) {
-      const monthKey = item.expense_date.slice(0, 7);
-      totals.set(monthKey, (totals.get(monthKey) ?? 0) + Number(item.amount || 0));
-    }
-    return Array.from({ length: 12 }, (_, index) => {
-      const date = new Date(year, month - 12 + index, 1);
-      const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
-      return { key: monthKey, label: date.toLocaleString(undefined, { month: 'short' }), total: totals.get(monthKey) ?? 0 };
-    });
-  }, [dashboardData.generalExpenses, dashboardData.vehicleExpenses, month, year]);
-  const partnerFunding = useMemo(() => dashboardData.partners.map((partner) => ({
-    ...partner,
-    amount: Number(dashboardData.partnerFunding.find((item) => item.partner_id === partner.id)?.amount ?? 0),
-  })), [dashboardData.partnerFunding, dashboardData.partners]);
-  const investorFunding = useMemo(() => dashboardData.investors.map((investor) => ({
-    ...investor,
-    amount: Number(dashboardData.investorFunding.find((item) => item.investor_id === investor.id)?.amount ?? 0),
-  })), [dashboardData.investorFunding, dashboardData.investors]);
-  const maxFunding = Math.max(...partnerFunding.map((item) => item.amount), ...investorFunding.map((item) => item.amount), 1);
-  const financialTrend = monthlySales.map((item, index) => ({
-    month: item.label,
-    sales: item.total,
-    expenses: monthlyExpenses[index]?.total ?? 0,
-  }));
-  const hasFinancialTrend = financialTrend.some((item) => item.sales > 0 || item.expenses > 0);
-  const recordedExpenseTotal = useMemo(
-    () => [...dashboardData.vehicleExpenses, ...dashboardData.generalExpenses]
-      .filter((item) => item.expense_date.startsWith(selectedMonth))
-      .reduce((sum, item) => sum + Number(item.amount || 0), 0),
-    [dashboardData.generalExpenses, dashboardData.vehicleExpenses, selectedMonth],
-  );
-  const recordedSalePayments = useMemo(
-    () => dashboardData.salePayments
-      .filter((item) => item.payment_date.startsWith(selectedMonth))
-      .reduce((sum, item) => sum + Number(item.amount || 0), 0),
-    [dashboardData.salePayments, selectedMonth],
-  );
-  const completedSalesValue = useMemo(
-    () => periodSales.reduce((sum, item) => sum + Number(item.selling_price || 0), 0),
-    [periodSales],
-  );
-  const recordedReceivables = useMemo(
-    () => dashboardData.outstandingSales.reduce((sum, item) => sum + Number(item.remaining_balance || 0), 0),
-    [dashboardData.outstandingSales],
-  );
-  const currentMonthLabel = new Date(year, month - 1, 1).toLocaleString(undefined, { month: 'long', year: 'numeric' });
-  const investorCapital = Number(dashboardData.investor.invested_capital || 0);
-  const investorDistributionAmount = Number(dashboardData.investor.recorded_distributions || 0);
-  const investorPaymentsAmount = Number(dashboardData.investor.recorded_payments || 0);
-  const fundingVehicleCount = Number(dashboardData.investor.funded_vehicle_count || 0);
-  const profitStatus = 'Unavailable';
-
-  if (error && !loading) {
-    return (
-      <div className="page-shell">
-        <div className="page-header">
-          <div><p className="eyebrow">Operations overview</p><h2>Premium showroom dashboard</h2></div>
-          <button type="button" className="ghost-button" onClick={() => setRefreshKey((value) => value + 1)}>Retry</button>
-        </div>
-        <p role="alert" className="auth-feedback error">{error}</p>
-        <p className="muted">Dashboard totals are hidden because the latest database queries did not complete successfully.</p>
-      </div>
-    );
-  }
-
-  const exportSummary = () => {
-    const rows = profile.role === 'investor'
-      ? [
-        ['Metric', 'Value'],
-        ['View', 'Own investor records only'],
-        ['Recorded contributions', String(investorCapital)],
-        ['Funded vehicles', String(fundingVehicleCount)],
-        ['Recorded distributions', String(investorDistributionAmount)],
-        ['Recorded distribution payments', String(investorPaymentsAmount)],
-        ['Profit calculation', 'Unavailable until transactional profit workflow is implemented'],
-      ]
-      : [
-        ['Metric', 'Value'],
-        ['Month', selectedMonth],
-        ['Available vehicles', String(dashboardData.inventory.available_count)],
-        ['Available inventory purchase cost (excluding customer consignment)', String(dashboardData.inventory.showroom_cost_value)],
-        ['Completed sales', String(periodSales.length)],
-        ['Completed sales recorded value (not cash received)', String(completedSalesValue)],
-        ['Recorded sale payments', String(recordedSalePayments)],
-        ['Recorded expenses', String(recordedExpenseTotal)],
-        ['Recorded outstanding sales balances', String(recordedReceivables)],
-        ['Stored showroom reserve balance', String(dashboardData.reserveBalances.reduce((sum, value) => sum + value, 0))],
-        ['Profit calculation', 'Unavailable until transactional profit workflow is implemented'],
-      ];
-    const csv = rows.map((row) => row.map((field) => `"${field.replaceAll('"', '""')}"`).join(',')).join('\r\n');
-    const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `trueline-dashboard-${selectedMonth}.csv`;
-    link.click();
-    URL.revokeObjectURL(url);
-  };
-
-  if (profile.role === 'investor') {
-    return (
-      <div className="page-shell">
-        <div className="page-header">
-          <div>
-            <p className="eyebrow">Your investment overview · {dashboardDateLabel}</p>
-            <h2>Welcome back, {profile.full_name?.trim().split(/\s+/)[0] || 'Investor'}</h2>
-          </div>
-          <div className="header-actions">
-            <button type="button" className="ghost-button" disabled={loading} onClick={() => setRefreshKey((value) => value + 1)}>{loading ? 'Refreshing...' : 'Refresh'}</button>
-            <button type="button" className="primary-button" onClick={exportSummary}>Export summary</button>
-          </div>
-        </div>
-        {error && <p role="alert" className="auth-feedback error">{error}</p>}
-        <section className="kpi-grid">
-          <KpiCard label="Your recorded capital" value={formatMoney(investorCapital)} tone="emerald" loading={loading} />
-          <KpiCard label="Vehicles you funded" value={String(fundingVehicleCount)} tone="cyan" loading={loading} />
-          <KpiCard label="Recorded distributions" value={formatMoney(investorDistributionAmount)} tone="amber" loading={loading} />
-          <KpiCard label="Recorded payments" value={formatMoney(investorPaymentsAmount)} tone="violet" loading={loading} />
-        </section>
-        <p className="muted">All financial totals are limited to records associated with your investor account. Profit, outstanding balances, and investment performance are unavailable until their approved transactional workflows are implemented.</p>
-        <div className="glass-panel panel-section">
-          <div className="section-head"><h3>Your recent financial transactions</h3></div>
-          <div className="table-list">
-            {dashboardData.transactions.map((item) => <div key={item.id} className="transaction-row"><div><strong>{item.transaction_type.replaceAll('_', ' ')}</strong><span>{new Date(item.created_at).toLocaleDateString()}</span></div><div className="transaction-meta"><span className="type-chip">{item.status}</span><strong className={item.amount < 0 ? 'neg' : 'pos'}>{formatMoney(item.amount)}</strong></div></div>)}
-            {!loading && !dashboardData.transactions.length && <p className="muted">No investor-linked transactions recorded.</p>}
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  const inventoryValue = Number(dashboardData.inventory.showroom_cost_value || 0);
-  const partnerCapital = partnerFunding.reduce((sum, item) => sum + item.amount, 0);
-  const totalInvestorCapital = investorFunding.reduce((sum, item) => sum + item.amount, 0);
-  const storedReserveBalance = dashboardData.reserveBalances.reduce((sum, value) => sum + value, 0);
-
-  return (
-    <div className="page-shell">
-      <div className="page-header">
-        <div>
-          <p className="eyebrow">Operations overview · {dashboardDateLabel}</p>
-          <h2>Welcome back, {profile.full_name?.trim().split(/\s+/)[0] || 'team'}</h2>
-        </div>
-        <div className="header-actions">
-          <input aria-label="Dashboard month" type="month" value={selectedMonth} onChange={(event) => setSelectedMonth(event.target.value)} />
-          <button type="button" className="ghost-button" disabled={loading} onClick={() => setRefreshKey((value) => value + 1)}>{loading ? 'Refreshing...' : 'Refresh'}</button>
-          <button type="button" className="primary-button" onClick={exportSummary}>Export summary</button>
-          <NavLink className="primary-button dashboard-action" to="/inventory">View inventory</NavLink>
-        </div>
-      </div>
-      {error && <p role="alert" className="auth-feedback error">{error}</p>}
-      <section className="kpi-grid">
-        <KpiCard label="Available inventory purchase cost" value={formatMoney(inventoryValue)} tone="emerald" loading={loading} />
-        <KpiCard label="Available vehicles" value={String(dashboardData.inventory.available_count)} tone="cyan" loading={loading} />
-        <KpiCard label="Completed sales · selected month" value={String(periodSales.length)} tone="amber" loading={loading} />
-        <KpiCard label="Vehicles purchased · selected month" value={String(dashboardData.purchaseCount)} tone="cyan" loading={loading} />
-        <KpiCard label="Completed sales value · selected month" value={formatMoney(completedSalesValue)} tone="violet" loading={loading} />
-        <KpiCard label="Recorded sale payments · selected month" value={formatMoney(recordedSalePayments)} tone="emerald" loading={loading} />
-        <KpiCard label="Recorded expenses · selected month" value={formatMoney(recordedExpenseTotal)} tone="amber" loading={loading} />
-        <KpiCard label="Recorded outstanding sales balances" value={formatMoney(recordedReceivables)} tone="cyan" loading={loading} />
-        <KpiCard label="Partner capital recorded" value={formatMoney(partnerCapital)} tone="emerald" loading={loading} />
-        <KpiCard label="Investor capital recorded" value={formatMoney(totalInvestorCapital)} tone="violet" loading={loading} />
-        <KpiCard label="Gross profit" value="Unavailable" tone="amber" loading={false} />
-        <KpiCard label="Net profit" value="Unavailable" tone="violet" loading={false} />
-      </section>
-      <p className="muted">Sales value is not cash received. Outstanding balances use the stored sales balance field and are not reconciled against payment history. Expense totals use recorded expense rows. Profit is unavailable until transaction-safe sales, expense approval, and profit posting are implemented.</p>
-
-      <section className="glass-panel panel-section">
-        <div className="section-head chart-heading">
-          <div>
-            <h3>Sales & recorded expenses</h3>
-            <p className="muted">Monthly totals · 12 months through {currentMonthLabel}</p>
-          </div>
-          <span className="small-tag">Recorded amounts</span>
-        </div>
-        {loading ? (
-          <p className="muted chart-state" role="status">Loading financial activity...</p>
-        ) : !hasFinancialTrend ? (
-          <p className="muted chart-state">No completed sales or recorded expenses in this period.</p>
-        ) : (
-          <Suspense fallback={<p className="muted chart-state" role="status">Loading chart...</p>}>
-            <SalesExpenseChart data={financialTrend} formatMoney={formatMoney} />
-          </Suspense>
-        )}
-      </section>
-
-      <section className="content-grid three-columns">
-        <div className="glass-panel panel-section">
-          <div className="section-head"><h3>Partner capital</h3><span className="small-tag">{dashboardData.partners.length} records</span></div>
-          <div className="list-wrap">{partnerFunding.map((partner) => <div key={partner.id} className="row-item"><div><strong>{partner.name}</strong><span>{formatMoney(partner.amount)}</span></div><div className="mini-meter"><span style={{ width: `${partner.amount / maxFunding * 100}%` }} /></div></div>)}{!loading && !partnerFunding.length && <p className="muted">No partner contribution records.</p>}</div>
-        </div>
-        <div className="glass-panel panel-section">
-          <div className="section-head"><h3>Investor capital</h3><span className="small-tag">{dashboardData.investors.length} records</span></div>
-          <div className="list-wrap">{investorFunding.map((investor) => <div key={investor.id} className="row-item"><div><strong>{investor.name}</strong><span>{formatMoney(investor.amount)}</span></div><div className="mini-meter"><span style={{ width: `${investor.amount / maxFunding * 100}%` }} /></div></div>)}{!loading && !investorFunding.length && <p className="muted">No investor contribution records.</p>}</div>
-        </div>
-        <div className="glass-panel panel-section">
-          <div className="section-head"><h3>Profit & reserves</h3></div>
-          <div className="ai-box">
-            <div className="ai-title"><ShieldCheck size={18} />Financial data coverage</div>
-            <p>Approved profit: {profitStatus}. The existing profit-calculation records do not enforce one approved calculation per sale, so summing them could double-count.</p>
-            <p>Stored reserve balance: {formatMoney(storedReserveBalance)}. No reserve reconciliation or movement-posting workflow is available yet.</p>
-          </div>
-        </div>
-      </section>
-
-      <section className="content-grid three-columns">
-        <div className="glass-panel panel-section">
-          <div className="section-head"><h3>Recent purchases</h3></div>
-          <div className="table-list">{dashboardData.purchases.map((item) => <div key={item.id} className="transaction-row"><div><strong>{[item.manufacturing_year, item.make, item.model].filter(Boolean).join(' ')}</strong><span>{item.purchase_date}</span></div><div className="transaction-meta"><strong>{formatMoney(Number(item.purchase_price || 0))}</strong></div></div>)}{!loading && !dashboardData.purchases.length && <p className="muted">No purchase-dated showroom vehicles recorded.</p>}</div>
-        </div>
-        <div className="glass-panel panel-section">
-          <div className="section-head"><h3>Slow-moving available inventory · 90+ days</h3></div>
-          <div className="table-list">{dashboardData.slowInventory.map((item) => <div key={item.id} className="transaction-row"><div><strong>{[item.manufacturing_year, item.make, item.model].filter(Boolean).join(' ')}</strong><span>Purchased {item.purchase_date}</span></div><div className="transaction-meta"><span className="type-chip">{item.days_in_stock} days</span></div></div>)}{!loading && !dashboardData.slowInventory.length && <p className="muted">No available showroom vehicles older than 90 days.</p>}</div>
-        </div>
-        <div className="glass-panel panel-section">
-          <div className="section-head"><h3>Outstanding sale balances</h3></div>
-          <div className="table-list">{dashboardData.outstandingSales.slice(0, 5).map((item) => <div key={item.id} className="transaction-row"><div><strong>{item.customer_name}</strong><span>{item.sale_date} · {item.status}</span></div><div className="transaction-meta"><strong>{formatMoney(Number(item.remaining_balance || 0))}</strong></div></div>)}{!loading && !dashboardData.outstandingSales.length && <p className="muted">No outstanding balances are recorded on sales.</p>}</div>
-        </div>
-      </section>
-
-      <section className="glass-panel panel-section">
-        <div className="section-head"><h3>Recent financial transactions</h3></div>
-        <div className="table-list">{dashboardData.transactions.map((item) => <div key={item.id} className="transaction-row"><div><strong>{item.transaction_type.replaceAll('_', ' ')}</strong><span>{new Date(item.created_at).toLocaleDateString()}</span></div><div className="transaction-meta"><span className="type-chip">{item.status}</span><strong className={item.amount < 0 ? 'neg' : 'pos'}>{formatMoney(item.amount)}</strong></div></div>)}{!loading && !dashboardData.transactions.length && <p className="muted">No financial transactions recorded.</p>}</div>
-      </section>
-    </div>
-  );
-}
-
-function KpiCard({ label, value, tone, loading }: { label: string; value: string; tone: string; loading: boolean }) {
-  return (
-    <div className="kpi-card glass-panel">
-      <div className="kpi-topline"><span>{label}</span><span className={`trend trend-${tone}`}>{loading ? 'Loading' : 'Records'}</span></div>
-      <strong>{loading ? '...' : value}</strong>
-    </div>
-  );
-}
-
 type Vehicle = {
   id: string;
   business_category: string;
@@ -1015,6 +559,7 @@ type Vehicle = {
   notes: string | null;
   customer_name: string | null;
   customer_contact: string | null;
+  inventoryAgeDays?: number | null;
 };
 
 type VehicleFile = {
@@ -1056,10 +601,20 @@ function InventoryView({ profile, userId }: { profile: Profile; userId: string }
   const [searchParams] = useSearchParams();
   const initialSearch = searchParams.get('search')?.trim() ?? '';
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
+  const [vehiclePhotos, setVehiclePhotos] = useState<Record<string, string>>({});
   const [searchInput, setSearchInput] = useState(initialSearch);
   const [search, setSearch] = useState(initialSearch);
   const [statusFilter, setStatusFilter] = useState('all');
   const [categoryFilter, setCategoryFilter] = useState('all');
+  const [fundingPartyFilter, setFundingPartyFilter] = useState('');
+  const [fundingPartyOptions, setFundingPartyOptions] = useState<{ value: string; label: string }[]>([]);
+  const [purchaseDateFrom, setPurchaseDateFrom] = useState('');
+  const [purchaseDateTo, setPurchaseDateTo] = useState('');
+  const [priceMin, setPriceMin] = useState('');
+  const [priceMax, setPriceMax] = useState('');
+  const [ageFilter, setAgeFilter] = useState('all');
+  const [sortBy, setSortBy] = useState('created_desc');
+  const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
   const [page, setPage] = useState(0);
   const [vehicleCount, setVehicleCount] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -1086,43 +641,163 @@ function InventoryView({ profile, userId }: { profile: Profile; userId: string }
   const pageSize = 50;
 
   const loadVehicles = useCallback(async () => {
-    if (!supabase) {
+    const client = supabase;
+    if (!client) {
       setLoading(false);
       setError(supabaseConfigError ?? 'Supabase is unavailable.');
       return;
     }
     setLoading(true);
+    setError('');
+    setVehiclePhotos({});
     try {
-      let query = supabase.from('vehicles').select('id, business_category, make, model, variant, manufacturing_year, registration_year, registration_city, registration_number, color, mileage, engine_capacity, transmission, fuel_type, condition, chassis_number, engine_number, status, purchase_date, purchase_price, total_additional_costs, expected_sale_price, actual_sale_price, notes, customer_name, customer_contact', { count: 'exact' });
+      if (priceMin && priceMax && Number(priceMin) > Number(priceMax)) {
+        setError('Minimum purchase price cannot exceed maximum purchase price.');
+        setVehicles([]);
+        setVehicleCount(0);
+        return;
+      }
+
+      let matchingVehicleIds: string[] | null = null;
+      if (fundingPartyFilter) {
+        const [partyType, partyId] = fundingPartyFilter.split(':');
+        if ((partyType !== 'partner' && partyType !== 'investor') || !partyId) {
+          throw new Error('The selected funding party filter is invalid.');
+        }
+        const contributionRows = await fetchPagedRows<{ vehicle_id: string }>((from, to) => {
+          let fundingQuery = client.from('funding_contributions').select('vehicle_id');
+          fundingQuery = partyType === 'partner'
+            ? fundingQuery.eq('partner_id', partyId)
+            : fundingQuery.eq('investor_id', partyId);
+          return fundingQuery.range(from, to);
+        });
+        matchingVehicleIds = [...new Set(contributionRows.map((row) => row.vehicle_id))];
+        if (!matchingVehicleIds.length) {
+          setVehicles([]);
+          setVehicleCount(0);
+          return;
+        }
+      }
+
+      let query = client.from('vehicles').select('id, business_category, make, model, variant, manufacturing_year, registration_year, registration_city, registration_number, color, mileage, engine_capacity, transmission, fuel_type, condition, chassis_number, engine_number, status, purchase_date, purchase_price, total_additional_costs, expected_sale_price, actual_sale_price, notes, customer_name, customer_contact', { count: 'exact' });
       if (categoryFilter !== 'all') query = query.eq('business_category', categoryFilter);
       if (statusFilter !== 'all') query = query.eq('status', statusFilter);
+      if (matchingVehicleIds) query = query.in('id', matchingVehicleIds);
       if (search) {
         const safeSearch = search.replace(/[^a-zA-Z0-9 -]/g, '').trim();
         if (safeSearch) {
-          const terms = [`make.ilike.%${safeSearch}%`, `model.ilike.%${safeSearch}%`, `variant.ilike.%${safeSearch}%`];
+          const terms = [
+            `make.ilike.%${safeSearch}%`,
+            `model.ilike.%${safeSearch}%`,
+            `variant.ilike.%${safeSearch}%`,
+            `registration_number.ilike.%${safeSearch}%`,
+          ];
           if (/^\d{1,4}$/.test(safeSearch)) terms.push(`manufacturing_year.eq.${safeSearch}`);
           query = query.or(terms.join(','));
         }
       }
+      if (purchaseDateFrom) query = query.gte('purchase_date', purchaseDateFrom);
+      if (purchaseDateTo) query = query.lte('purchase_date', purchaseDateTo);
+      if (priceMin) query = query.gte('purchase_price', Number(priceMin));
+      if (priceMax) query = query.lte('purchase_price', Number(priceMax));
+
+      const now = new Date();
+      const dateString = (date: Date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+      const daysAgo = (days: number) => {
+        const date = new Date(now);
+        date.setDate(date.getDate() - days);
+        return dateString(date);
+      };
+      if (ageFilter === '0-15') query = query.gte('purchase_date', daysAgo(15)).lte('purchase_date', dateString(now));
+      if (ageFilter === '16-30') query = query.gte('purchase_date', daysAgo(30)).lt('purchase_date', daysAgo(15));
+      if (ageFilter === '31-60') query = query.gte('purchase_date', daysAgo(60)).lt('purchase_date', daysAgo(30));
+      if (ageFilter === '61-90') query = query.gte('purchase_date', daysAgo(90)).lt('purchase_date', daysAgo(60));
+      if (ageFilter === '90+') query = query.lt('purchase_date', daysAgo(90));
+
+      const order = sortBy === 'purchase_date_asc'
+        ? { column: 'purchase_date', ascending: true }
+        : sortBy === 'purchase_price_desc'
+          ? { column: 'purchase_price', ascending: false }
+          : sortBy === 'make_asc'
+            ? { column: 'make', ascending: true }
+            : { column: 'created_at', ascending: false };
       const { data: pageData, count, error: pageError } = await query
-        .order('created_at', { ascending: false })
+        .order(order.column, { ascending: order.ascending })
         .range(page * pageSize, page * pageSize + pageSize - 1);
       if (pageError) setError(formatOperationError(pageError));
       else {
-        setError('');
-        setVehicles((pageData ?? []) as Vehicle[]);
+        const pageVehicles = (pageData ?? []) as Vehicle[];
+        const loadedAt = Date.now();
+        setVehicles(pageVehicles.map((vehicle) => ({
+          ...vehicle,
+          inventoryAgeDays: vehicle.purchase_date
+            ? Math.max(0, Math.floor((loadedAt - new Date(`${vehicle.purchase_date}T00:00:00`).getTime()) / 86_400_000))
+            : null,
+        })));
         setVehicleCount(count ?? 0);
+        const vehicleIds = pageVehicles.map((vehicle) => vehicle.id);
+        if (vehicleIds.length) {
+          const { data: fileRows, error: fileError } = await client
+            .from('vehicle_files')
+            .select('vehicle_id, object_path, created_at')
+            .eq('storage_bucket', 'vehicle-images')
+            .like('content_type', 'image/%')
+            .in('vehicle_id', vehicleIds)
+            .order('created_at', { ascending: false });
+          if (fileError) throw new Error(`Inventory loaded, but vehicle photos could not be listed: ${formatOperationError(fileError)}`);
+          const latestPhotos = new Map<string, string>();
+          for (const file of fileRows ?? []) {
+            if (!latestPhotos.has(file.vehicle_id)) latestPhotos.set(file.vehicle_id, file.object_path);
+          }
+          if (latestPhotos.size) {
+            const paths = [...latestPhotos.values()];
+            const { data: signedFiles, error: signedFilesError } = await client.storage
+              .from('vehicle-images')
+              .createSignedUrls(paths, 300);
+            if (signedFilesError) throw new Error(`Inventory loaded, but vehicle photos could not be opened: ${formatOperationError(signedFilesError)}`);
+            const photos: Record<string, string> = {};
+            for (const signedFile of signedFiles ?? []) {
+              if (!signedFile.path || !signedFile.signedUrl) continue;
+              const vehicleId = [...latestPhotos.entries()].find(([, path]) => path === signedFile.path)?.[0];
+              if (vehicleId) photos[vehicleId] = signedFile.signedUrl;
+            }
+            setVehiclePhotos(photos);
+          }
+        }
       }
     } catch (loadError) {
       setError(formatOperationError(loadError));
     } finally {
       setLoading(false);
     }
-  }, [categoryFilter, page, search, statusFilter]);
+  }, [ageFilter, categoryFilter, fundingPartyFilter, page, priceMax, priceMin, purchaseDateFrom, purchaseDateTo, search, sortBy, statusFilter]);
 
   useEffect(() => {
     void loadVehicles();
   }, [loadVehicles]);
+
+  useEffect(() => {
+    if (!supabase) return;
+    let active = true;
+    void Promise.all([
+      supabase.from('partners').select('id, name').order('name'),
+      supabase.from('investors').select('id, name').order('name'),
+    ]).then(([partnersResult, investorsResult]) => {
+      if (!active) return;
+      const failure = partnersResult.error ?? investorsResult.error;
+      if (failure) {
+        setError(`Funding filters could not be loaded: ${formatOperationError(failure)}`);
+        return;
+      }
+      setFundingPartyOptions([
+        ...(partnersResult.data ?? []).map((party) => ({ value: `partner:${party.id}`, label: `Partner · ${party.name}` })),
+        ...(investorsResult.data ?? []).map((party) => ({ value: `investor:${party.id}`, label: `Investor · ${party.name}` })),
+      ]);
+    }).catch((loadError: unknown) => {
+      if (active) setError(`Funding filters could not be loaded: ${formatOperationError(loadError)}`);
+    });
+    return () => { active = false; };
+  }, []);
 
   useEffect(() => {
     const timeout = window.setTimeout(() => {
@@ -1244,6 +919,23 @@ function InventoryView({ profile, userId }: { profile: Profile; userId: string }
     void loadExistingFunding(vehicle.id);
     setFormOpen(true);
   };
+
+  useEffect(() => {
+    const requestedEditId = searchParams.get('edit');
+    if (!requestedEditId || profile.role !== 'super_admin' || !supabase) return;
+    let active = true;
+    void supabase.from('vehicles')
+      .select('id, business_category, make, model, variant, manufacturing_year, registration_year, registration_city, registration_number, color, mileage, engine_capacity, transmission, fuel_type, condition, chassis_number, engine_number, status, purchase_date, purchase_price, total_additional_costs, expected_sale_price, actual_sale_price, notes, customer_name, customer_contact')
+      .eq('id', requestedEditId)
+      .maybeSingle()
+      .then(({ data, error: editError }) => {
+        if (!active) return;
+        if (editError) setError(formatOperationError(editError));
+        else if (data) openEditVehicle(data as Vehicle);
+        else setError('Vehicle not found.');
+      });
+    return () => { active = false; };
+  }, [profile.role, searchParams]);
 
   const toggleFundingParty = (partyId: string, checked: boolean) => {
     setFundingDrafts((current) => checked
@@ -1458,6 +1150,8 @@ function InventoryView({ profile, userId }: { profile: Profile; userId: string }
     : variantSuggestions;
   const fundingTotal = existingFunding.reduce((total, item) => total + Number(item.amount), 0)
     + fundingDrafts.reduce((total, item) => total + Number(item.amount || 0), 0);
+  const inventoryCurrency = import.meta.env.VITE_DEFAULT_CURRENCY || 'PKR';
+  const formatInventoryMoney = (value: number) => `${inventoryCurrency} ${Number(value).toLocaleString()}`;
 
   return (
     <div className="page-shell">
@@ -1471,16 +1165,38 @@ function InventoryView({ profile, userId }: { profile: Profile; userId: string }
       {error && <p role="alert" className="auth-feedback error">{error}</p>}
       {notice && <p role="status" className="auth-feedback">{notice}</p>}
 
-      <div className="inventory-toolbar glass-panel">
-        <input aria-label="Search inventory" type="search" placeholder="Search make, model, variant, year" value={searchInput} onChange={(event) => setSearchInput(event.target.value)} />
-        <select aria-label="Filter by category" value={categoryFilter} onChange={(event) => { setPage(0); setCategoryFilter(event.target.value); }}>
-          <option value="all">All categories</option>
-          {vehicleCategories.map((category) => <option key={category.value} value={category.value}>{category.label}</option>)}
-        </select>
-        <select aria-label="Filter by status" value={statusFilter} onChange={(event) => { setPage(0); setStatusFilter(event.target.value); }}>
-          <option value="all">All statuses</option>
-          {['available', 'reserved', 'repair', 'sold', 'archived'].map((status) => <option key={status} value={status}>{status}</option>)}
-        </select>
+      <div className="inventory-filters glass-panel">
+        <div className="inventory-filter-primary">
+          <input aria-label="Search inventory" type="search" placeholder="Search make, model, variant, registration, year" value={searchInput} onChange={(event) => setSearchInput(event.target.value)} />
+          <select aria-label="Filter by business and funding category" value={categoryFilter} onChange={(event) => { setPage(0); setCategoryFilter(event.target.value); }}>
+            <option value="all">All ownership categories</option>
+            {vehicleCategories.map((category) => <option key={category.value} value={category.value}>{category.label}</option>)}
+          </select>
+          <select aria-label="Filter by status" value={statusFilter} onChange={(event) => { setPage(0); setStatusFilter(event.target.value); }}>
+            <option value="all">All statuses</option>
+            {['available', 'reserved', 'repair', 'sold', 'archived'].map((status) => <option key={status} value={status}>{status.replaceAll('_', ' ')}</option>)}
+          </select>
+          <select aria-label="Filter by funding partner or investor" value={fundingPartyFilter} onChange={(event) => { setPage(0); setFundingPartyFilter(event.target.value); }}>
+            <option value="">All contributors</option>
+            {fundingPartyOptions.map((party) => <option key={party.value} value={party.value}>{party.label}</option>)}
+          </select>
+        </div>
+        <div className="inventory-filter-secondary">
+          <label>Purchase from<input type="date" aria-label="Purchase date from" value={purchaseDateFrom} onChange={(event) => { setPage(0); setPurchaseDateFrom(event.target.value); }} /></label>
+          <label>Purchase to<input type="date" aria-label="Purchase date to" value={purchaseDateTo} onChange={(event) => { setPage(0); setPurchaseDateTo(event.target.value); }} /></label>
+          <label>Min price<input type="number" min="0" aria-label="Minimum purchase price" value={priceMin} onChange={(event) => { setPage(0); setPriceMin(event.target.value); }} /></label>
+          <label>Max price<input type="number" min="0" aria-label="Maximum purchase price" value={priceMax} onChange={(event) => { setPage(0); setPriceMax(event.target.value); }} /></label>
+          <label>Inventory age<select aria-label="Filter by inventory age" value={ageFilter} onChange={(event) => { setPage(0); setAgeFilter(event.target.value); }}>
+            <option value="all">Any age</option><option value="0-15">0–15 days</option><option value="16-30">16–30 days</option><option value="31-60">31–60 days</option><option value="61-90">61–90 days</option><option value="90+">Over 90 days</option>
+          </select></label>
+          <label>Sort by<select aria-label="Sort inventory" value={sortBy} onChange={(event) => { setPage(0); setSortBy(event.target.value); }}>
+            <option value="created_desc">Recently added</option><option value="purchase_date_asc">Oldest purchase</option><option value="purchase_price_desc">Highest purchase price</option><option value="make_asc">Make A–Z</option>
+          </select></label>
+        </div>
+        <div className="inventory-view-toggle" role="group" aria-label="Inventory layout">
+          <button type="button" className={viewMode === 'grid' ? 'active' : ''} aria-pressed={viewMode === 'grid'} onClick={() => setViewMode('grid')}>Photo cards</button>
+          <button type="button" className={viewMode === 'list' ? 'active' : ''} aria-pressed={viewMode === 'list'} onClick={() => setViewMode('list')}>List view</button>
+        </div>
       </div>
 
       {formOpen && (
@@ -1586,7 +1302,22 @@ function InventoryView({ profile, userId }: { profile: Profile; userId: string }
       )}
 
       <div className="glass-panel panel-section">
-        {loading ? <p className="muted">Loading inventory...</p> : vehicles.length === 0 ? <p className="muted">No vehicles match this view.</p> : <div className="table-scroll"><table className="data-table">
+        {loading ? <p className="muted" role="status">Loading inventory...</p> : vehicles.length === 0 ? <p className="muted">No vehicles match this view.</p> : viewMode === 'grid'
+          ? <div className="vehicle-card-grid">
+            {vehicles.map((vehicle) => (
+              <VehicleCard
+                key={vehicle.id}
+                vehicle={vehicle}
+                imageUrl={vehiclePhotos[vehicle.id]}
+                categoryLabel={vehicleCategories.find((category) => category.value === vehicle.business_category)?.label ?? vehicle.business_category}
+                formatMoney={formatInventoryMoney}
+                canManage={profile.role === 'super_admin'}
+                onEdit={() => openEditVehicle(vehicle)}
+                onArchive={() => void archiveVehicle(vehicle)}
+              />
+            ))}
+          </div>
+          : <div className="table-scroll"><table className="data-table">
           <thead>
             <tr>
               <th>Vehicle</th>
@@ -1600,13 +1331,18 @@ function InventoryView({ profile, userId }: { profile: Profile; userId: string }
           <tbody>
             {vehicles.map((vehicle) => (
               <tr key={vehicle.id}>
-                <td>{[vehicle.manufacturing_year, vehicle.make, vehicle.model, vehicle.variant].filter(Boolean).join(' ')}</td>
+                <td>
+                  <Link to={`/inventory/${vehicle.id}`} className="inventory-vehicle-link">
+                    {[vehicle.manufacturing_year, vehicle.make, vehicle.model, vehicle.variant].filter(Boolean).join(' ')}
+                  </Link>
+                  <span className="table-subtext">{vehicle.registration_number || 'Registration not recorded'}</span>
+                </td>
                 <td>{vehicleCategories.find((category) => category.value === vehicle.business_category)?.label ?? vehicle.business_category}</td>
-                <td><span className="status-badge">{vehicle.status}</span></td>
-                <td>{vehicle.purchase_price?.toLocaleString() ?? '0'}</td>
-                <td>{vehicle.expected_sale_price?.toLocaleString() ?? '—'}</td>
+                <td><span className="status-badge">{vehicle.status.replaceAll('_', ' ')}</span></td>
+                <td>{vehicle.purchase_price === null ? 'Not recorded' : formatInventoryMoney(vehicle.purchase_price)}</td>
+                <td>{vehicle.expected_sale_price === null ? 'Not recorded' : formatInventoryMoney(vehicle.expected_sale_price)}</td>
                 <td className="inventory-actions">
-                  <button type="button" className="text-button" onClick={() => void loadVehicleFiles(vehicle)}>View</button>
+                  <button type="button" className="text-button" onClick={() => void loadVehicleFiles(vehicle)}>Files</button>
                   {profile.role === 'super_admin' && <><button type="button" className="text-button" onClick={() => openEditVehicle(vehicle)}>Edit</button>{vehicle.status !== 'archived' && <button type="button" className="text-button" onClick={() => void archiveVehicle(vehicle)}>Archive</button>}</>}
                 </td>
               </tr>
@@ -1650,36 +1386,12 @@ function VehicleFileLink({ file }: { file: VehicleFile }) {
   return url ? <a href={url} target="_blank" rel="noreferrer">{file.file_name}</a> : <span>{file.file_name}</span>;
 }
 
-function PurchaseView() {
-  return <PagePlaceholder title="Purchase management" subtitle="Add funding, vehicle expenses, and purchase approval workflow." />;
-}
-
-function SalesView() {
-  return <PagePlaceholder title="Sales management" subtitle="Record customer sales, partial payments, and approval workflow." />;
-}
-
 function PartnersView() {
   return <PagePlaceholder title="Partners" subtitle="Manage six partner profiles, funding records, and profit allocations." />;
 }
 
 function InvestorsView() {
   return <PagePlaceholder title="Investors" subtitle="Track investor portfolios, returns, links to funded vehicles, and balances." />;
-}
-
-function FinanceView() {
-  return <PagePlaceholder title="Financial transactions" subtitle="Unified ledger with partner and investor funding, sales receipts, and reserve movement." />;
-}
-
-function ProfitView() {
-  return <PagePlaceholder title="Profit distribution" subtitle="Reproducible profit calculation engine and payout approvals." />;
-}
-
-function ExpensesView() {
-  return <PagePlaceholder title="Expenses" subtitle="Operating costs, reserves, receipts, and monthly totals." />;
-}
-
-function ReportsView() {
-  return <PagePlaceholder title="Reports" subtitle="CSV and PDF business statements for inventory, sales, and financial summaries." />;
 }
 
 function AiView() {
