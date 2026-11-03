@@ -26,11 +26,13 @@ export default function DashboardVisualCharts({
   inventory,
   role,
   periodLabel,
+  showCapitalActivity = true,
 }: {
   data: DashboardChartPoint[];
   inventory: InventoryChartSlice[];
   role: 'super_admin' | 'partner' | 'investor';
   periodLabel: string;
+  showCapitalActivity?: boolean;
 }) {
   const inventoryTotal = inventory.reduce((sum, item) => sum + item.value, 0);
   const expenseTotal = data.reduce((sum, item) => sum + item.vehicleExpenses + item.showroomExpenses, 0);
@@ -60,10 +62,10 @@ export default function DashboardVisualCharts({
                   <CartesianGrid stroke="rgba(198, 211, 226, 0.1)" vertical={false} />
                   <XAxis dataKey="label" tick={{ fill: '#c6d3e2', fontSize: 10 }} tickLine={false} axisLine={{ stroke: 'rgba(217, 184, 108, 0.2)' }} minTickGap={20} />
                   <YAxis width={72} tick={{ fill: '#c6d3e2', fontSize: 10 }} tickLine={false} axisLine={false} tickFormatter={(value) => Number(value).toLocaleString()} />
-                  <Tooltip formatter={(value, name) => [money(value), name]} contentStyle={{ background: '#0b1829', border: '1px solid rgba(148, 183, 217, 0.3)', borderRadius: 12 }} labelStyle={{ color: '#f3f7fc' }} />
-                  <Legend wrapperStyle={{ color: '#c6d3e2', fontSize: 11 }} />
-                  <Bar dataKey="vehicleExpenses" name="Vehicle expenses" stackId="expenses" fill="#d9b86c" radius={[0, 0, 0, 0]} maxBarSize={28} isAnimationActive />
-                  <Bar dataKey="showroomExpenses" name="Showroom expenses" stackId="expenses" fill="#71b4d7" radius={[4, 4, 0, 0]} maxBarSize={28} isAnimationActive />
+                  <Tooltip formatter={(value, name) => [money(value), name]} contentStyle={{ background: '#202127', border: '1px solid rgba(255,255,255,0.12)', borderRadius: 12 }} labelStyle={{ color: '#f5f5f7' }} />
+                  <Legend wrapperStyle={{ color: '#c4c6cc', fontSize: 11 }} />
+                  <Bar dataKey="vehicleExpenses" name="Vehicle expenses" stackId="expenses" fill="#a855f7" radius={[0, 0, 0, 0]} maxBarSize={28} isAnimationActive />
+                  <Bar dataKey="showroomExpenses" name="Showroom expenses" stackId="expenses" fill="#258bff" radius={[4, 4, 0, 0]} maxBarSize={28} isAnimationActive />
                 </BarChart>
               </ResponsiveContainer>
             </div>
@@ -85,7 +87,7 @@ export default function DashboardVisualCharts({
                   <Pie data={inventory} dataKey="value" nameKey="name" innerRadius="66%" outerRadius="88%" paddingAngle={3} stroke="none" isAnimationActive>
                     {inventory.map((item) => <Cell key={item.name} fill={item.color} />)}
                   </Pie>
-                  <Tooltip formatter={(value, name) => [`${Number(value)} vehicles`, name]} contentStyle={{ background: '#0b1829', border: '1px solid rgba(148, 183, 217, 0.3)', borderRadius: 12 }} />
+                  <Tooltip formatter={(value, name) => [`${Number(value)} vehicles`, name]} contentStyle={{ background: '#202127', border: '1px solid rgba(255,255,255,0.12)', borderRadius: 12 }} />
                   <text x="50%" y="47%" textAnchor="middle" dominantBaseline="middle" fill="#f3e5bd" fontSize="27" fontWeight="700">{inventoryTotal}</text>
                   <text x="50%" y="58%" textAnchor="middle" dominantBaseline="middle" fill="#aab9ca" fontSize="11">vehicles</text>
                 </PieChart>
@@ -98,7 +100,7 @@ export default function DashboardVisualCharts({
         )}
       </section>
 
-      <section className="glass-panel dashboard-visual-card dashboard-visual-wide">
+      {showCapitalActivity && <section className="glass-panel dashboard-visual-card dashboard-visual-wide">
         <div className="dashboard-visual-heading">
           <div><p className="eyebrow">{role === 'investor' ? 'Your account only' : 'Recorded capital activity'}</p><h3>{role === 'investor' ? 'Your investment activity' : 'Funding contributions'}</h3></div>
           <strong>{contributionsExist ? money(fundingTotal) : 'No contributions'}</strong>
@@ -113,21 +115,21 @@ export default function DashboardVisualCharts({
                 <CartesianGrid stroke="rgba(198, 211, 226, 0.1)" vertical={false} />
                 <XAxis dataKey="label" tick={{ fill: '#c6d3e2', fontSize: 10 }} tickLine={false} axisLine={{ stroke: 'rgba(217, 184, 108, 0.2)' }} minTickGap={20} />
                 <YAxis width={76} tick={{ fill: '#c6d3e2', fontSize: 10 }} tickLine={false} axisLine={false} tickFormatter={(value) => Number(value).toLocaleString()} />
-                <Tooltip formatter={(value, name) => [money(value), name]} contentStyle={{ background: '#0b1829', border: '1px solid rgba(148, 183, 217, 0.3)', borderRadius: 12 }} labelStyle={{ color: '#f3f7fc' }} />
-                <Legend wrapperStyle={{ color: '#c6d3e2', fontSize: 11 }} />
+                <Tooltip formatter={(value, name) => [money(value), name]} contentStyle={{ background: '#202127', border: '1px solid rgba(255,255,255,0.12)', borderRadius: 12 }} labelStyle={{ color: '#f5f5f7' }} />
+                <Legend wrapperStyle={{ color: '#c4c6cc', fontSize: 11 }} />
                 {role === 'investor' ? <>
-                  <Area type="monotone" dataKey="investorContributions" name="Your contributions" stroke="#d9b86c" fill="rgba(217, 184, 108, 0.2)" strokeWidth={2} isAnimationActive />
-                  <Area type="monotone" dataKey="investorAllocations" name="Approved allocations" stroke="#71b4d7" fill="rgba(113, 180, 215, 0.14)" strokeWidth={2} isAnimationActive />
-                  <Area type="monotone" dataKey="investorPaid" name="Profit paid" stroke="#a9d18e" fill="rgba(169, 209, 142, 0.1)" strokeWidth={2} isAnimationActive />
+                  <Area type="monotone" dataKey="investorContributions" name="Your contributions" stroke="#a855f7" fill="rgba(168, 85, 247, 0.2)" strokeWidth={2.5} isAnimationActive />
+                  <Area type="monotone" dataKey="investorAllocations" name="Approved allocations" stroke="#258bff" fill="rgba(37, 139, 255, 0.14)" strokeWidth={2} isAnimationActive />
+                  <Area type="monotone" dataKey="investorPaid" name="Profit paid" stroke="#4cc89a" fill="rgba(76, 200, 154, 0.1)" strokeWidth={2} isAnimationActive />
                 </> : <>
-                  <Area type="monotone" dataKey="partnerFunding" name="Partner contributions" stroke="#d9b86c" fill="rgba(217, 184, 108, 0.2)" strokeWidth={2} isAnimationActive />
-                  <Area type="monotone" dataKey="investorFunding" name="Investor contributions" stroke="#71b4d7" fill="rgba(113, 180, 215, 0.14)" strokeWidth={2} isAnimationActive />
+                  <Area type="monotone" dataKey="partnerFunding" name="Partner contributions" stroke="#a855f7" fill="rgba(168, 85, 247, 0.2)" strokeWidth={2.5} isAnimationActive />
+                  <Area type="monotone" dataKey="investorFunding" name="Investor contributions" stroke="#258bff" fill="rgba(37, 139, 255, 0.14)" strokeWidth={2} isAnimationActive />
                 </>}
               </AreaChart>
             </ResponsiveContainer>
           </div>
         )}
-      </section>
+      </section>}
     </div>
   );
 }

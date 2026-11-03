@@ -308,7 +308,7 @@ function App() {
   }
 
   return (
-    <div className="app-shell" style={appStyle}>
+    <div className={`app-shell${activeKey === 'dashboard' ? ' app-shell-dashboard' : ''}`} style={appStyle}>
       <div className="app-background" />
       {mobileNavOpen && (
         <button

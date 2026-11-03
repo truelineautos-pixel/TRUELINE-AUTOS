@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Area, Bar, CartesianGrid, ComposedChart, Legend, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { Area, AreaChart, CartesianGrid, ComposedChart, Legend, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import type { LucideIcon } from 'lucide-react';
+import { CarFront, CircleDollarSign, CreditCard, HandCoins, PackageCheck, ReceiptText, TrendingUp, Wallet } from 'lucide-react';
 import DashboardVisualCharts, { type DashboardChartPoint, type InventoryChartSlice } from './DashboardVisualCharts';
 import { supabase } from '../lib/supabase';
 
@@ -122,6 +124,15 @@ function moneyForRecords(value: number, recordCount: number, emptyValue: string)
   return recordCount > 0 ? money(value) : emptyValue;
 }
 
+function comparePeriod(current: number, previous: number, currentCount: number, previousCount: number, formatAsMoney = true): string {
+  if (currentCount === 0 && previousCount === 0) return 'No activity in either period';
+  if (previousCount === 0) return 'New activity vs previous period';
+  const difference = current - previous;
+  if (difference === 0) return 'No change vs previous period';
+  const amount = formatAsMoney ? money(Math.abs(difference)) : Math.abs(difference).toLocaleString();
+  return `${amount} ${difference > 0 ? 'higher' : 'lower'} vs previous period`;
+}
+
 function errorText(error: unknown): string {
   return error instanceof Error ? error.message : 'Dashboard data could not be loaded.';
 }
@@ -152,6 +163,7 @@ export default function ExecutiveDashboard({ profile }: { profile: UserProfile }
   const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | null>(null);
   const [tableSearch, setTableSearch] = useState('');
   const [reportType, setReportType] = useState('sales');
+  const [mainChart, setMainChart] = useState<'sales' | 'funding' | null>(null);
   const lastSyncAt = useRef(0);
   const realtimeRefreshTimer = useRef<number | null>(null);
   const bounds = useMemo(() => getBounds(preset, customStart, customEnd, dashboardNow), [preset, customStart, customEnd, dashboardNow]);
@@ -488,9 +500,9 @@ export default function ExecutiveDashboard({ profile }: { profile: UserProfile }
     .reduce((sum, item) => sum + Number(item.amount), 0);
   const investorTiedRecords = data.investorFunding.filter((funding) => investorVehicles.some((vehicle) => vehicle.id === funding.vehicle_id && ['available', 'reserved', 'repair'].includes(vehicle.status))).length;
   const inventoryBreakdown = (vehicles: Vehicle[]): InventoryChartSlice[] => [
-    { name: 'Available', value: vehicles.filter((vehicle) => vehicle.status === 'available').length, color: '#d9b86c' },
-    { name: 'Reserved', value: vehicles.filter((vehicle) => vehicle.status === 'reserved').length, color: '#71b4d7' },
-    { name: 'Repair', value: vehicles.filter((vehicle) => vehicle.status === 'repair').length, color: '#cb806f' },
+    { name: 'Available', value: vehicles.filter((vehicle) => vehicle.status === 'available').length, color: '#a855f7' },
+    { name: 'Reserved', value: vehicles.filter((vehicle) => vehicle.status === 'reserved').length, color: '#258bff' },
+    { name: 'Repair', value: vehicles.filter((vehicle) => vehicle.status === 'repair').length, color: '#f0a267' },
   ].filter((item) => item.value > 0);
 
   const selectedFunding = data.funding.filter((item) => inRange(item.contribution_date, bounds));
@@ -624,18 +636,21 @@ export default function ExecutiveDashboard({ profile }: { profile: UserProfile }
       <div className="page-shell executive-dashboard">
         <DashboardHeader profile={profile} preset={preset} setPreset={setPreset} customStart={customStart} setCustomStart={setCustomStart} customEnd={customEnd} setCustomEnd={setCustomEnd} loading={loading} refresh={refreshDashboard} periodLabel={periodLabel} liveStatus={liveStatus} lastUpdatedAt={lastUpdatedAt} />
         {error && <p role="alert" className="auth-feedback error">{error}</p>}
-        <section className="executive-kpi-grid">
-          <KpiCard label="Your recorded contributions" value={moneyForRecords(investorCapital, investorFunding.length, 'No recorded contributions')} loading={loading} />
-          <KpiCard label="Vehicles you funded" value={String(investorVehicleIds.size)} loading={loading} />
-          <KpiCard label="Approved profit allocated" value={moneyForRecords(ownDistributed, ownApprovedDistributions.length, 'Not yet available')} loading={loading} />
-          <KpiCard label="Profit paid" value={moneyForRecords(ownPaid, ownDistributionPayments.length, 'No recorded payments')} loading={loading} />
-          <KpiCard label="Profit payable" value={moneyForRecords(ownDistributed - ownPaid, ownApprovedDistributions.length, 'Not yet available')} loading={loading} />
-          <KpiCard label="Capital tied in unsold vehicles" value={moneyForRecords(investorTiedCapital, investorTiedRecords, 'No recorded capital tied in unsold vehicles')} loading={loading} />
-          <KpiCard label="Vehicle sale revenue" value="Not available for this role" loading={false} />
-          <KpiCard label="Net profit" value="Not yet available" loading={false} />
+        <section className="executive-kpi-grid executive-primary-kpis">
+          <KpiCard icon={Wallet} label="Your contributions" value={moneyForRecords(investorCapital, investorFunding.length, 'No recorded contributions')} loading={loading} />
+          <KpiCard icon={CarFront} label="Vehicles funded" value={String(investorVehicleIds.size)} loading={loading} />
+          <KpiCard icon={CircleDollarSign} label="Approved profit allocated" value={moneyForRecords(ownDistributed, ownApprovedDistributions.length, 'Not yet available')} loading={loading} />
+          <KpiCard icon={HandCoins} label="Profit payable" value={moneyForRecords(ownDistributed - ownPaid, ownApprovedDistributions.length, 'Not yet available')} loading={loading} />
         </section>
-        <p className="executive-data-note">Your investor-linked funding and distributions created in the selected period only. Payments are all recorded disbursements linked to those distributions. Sale revenue, customer records, vehicle expenses, and other investors’ financial records are not accessible under this role. {periodLabel}</p>
         <DashboardVisualCharts data={investorActivityData} inventory={inventoryBreakdown(currentInventory)} role="investor" periodLabel={chartPeriodLabel} />
+        <details className="executive-secondary-metrics">
+          <summary>Your investment details <span>Additional recorded metrics</span></summary>
+          <div className="executive-secondary-kpi-grid">
+            <KpiCard icon={CreditCard} label="Profit paid" value={moneyForRecords(ownPaid, ownDistributionPayments.length, 'No recorded payments')} loading={loading} compact />
+            <KpiCard icon={PackageCheck} label="Capital tied in unsold vehicles" value={moneyForRecords(investorTiedCapital, investorTiedRecords, 'No recorded capital tied in unsold vehicles')} loading={loading} compact />
+          </div>
+          <p className="executive-data-note">Your investor-linked funding and distributions created in the selected period only. Payments are recorded disbursements linked to your distributions. Sale revenue, customer records, vehicle expenses, and other investors’ financial records are not accessible under this role. {periodLabel}</p>
+        </details>
         <section className="glass-panel panel-section">
           <div className="section-head"><h3>Your investor statement</h3><button type="button" className="primary-button" onClick={() => exportReport('investors')}>Export CSV</button></div>
           <DashboardTable title="Investor contributions" columns={[
@@ -652,19 +667,24 @@ export default function ExecutiveDashboard({ profile }: { profile: UserProfile }
 
   const tableFilter = tableSearch.trim().toLowerCase();
   const revenueTrendExists = chartData.some((item) => item.revenue || item.cash || item.units);
+  const fundingTrendExists = chartData.some((item) => item.partnerFunding || item.investorFunding);
+  const activeMainChart = mainChart ?? (!revenueTrendExists && fundingTrendExists ? 'funding' : 'sales');
+  const fundingTotal = chartData.reduce((sum, item) => sum + item.partnerFunding + item.investorFunding, 0);
   const profitStatus = netProfit === null ? 'Not yet available — each completed sale needs exactly one approved calculation.' : money(netProfit);
-  const kpis = [
-    { label: 'Total vehicles in inventory', value: String(currentInventory.length), sub: 'Current snapshot' },
-    { label: 'Available for sale', value: String(availableVehicles.length), sub: 'Current snapshot' },
-    { label: 'Reserved', value: String(reservedVehicles.length), sub: 'Current snapshot' },
-    { label: 'Vehicles sold in range', value: String(completedSales.length), sub: periodLabel },
-    { label: 'Sales revenue', value: moneyForRecords(totalRevenue, completedSales.length, 'No recorded sales'), sub: 'Completed recorded sale prices' },
-    { label: 'Cash received', value: moneyForRecords(cashReceived, selectedPayments.length, 'No recorded customer payments'), sub: 'Recorded customer payments' },
-    { label: 'Outstanding balances', value: outstandingUnavailable, sub: 'Stored sales balance field' },
-    { label: 'Purchase capital acquired', value: purchaseDatesMissing ? 'Not available — a purchase date is missing' : missingPurchasePrices ? 'Not available — a purchase price is missing' : moneyForRecords(purchaseSpend, purchaseRecords.length, 'No recorded purchases'), sub: 'Recorded vehicle purchase value' },
-    { label: 'Capital tied in unsold vehicles', value: currentInventory.length === 0 ? 'No unsold inventory' : missingUnsoldPrices ? 'Not available — a purchase price is missing' : money(currentUnsoldPurchaseValue), sub: 'Current purchase-price value' },
-    { label: 'Gross profit', value: 'Not yet available', sub: 'No defined gross-profit field' },
-    { label: 'Net profit', value: profitStatus, sub: 'Approved stored calculations only' },
+  const dashboardKpis = [
+    { icon: TrendingUp, label: 'Sales revenue', value: moneyForRecords(totalRevenue, completedSales.length, 'No recorded sales'), sub: 'Completed recorded sales', comparison: previous ? comparePeriod(totalRevenue, priorRevenue, completedSales.length, priorCompletedSales.length) : 'Comparison unavailable for All time' },
+    { icon: CreditCard, label: 'Cash received', value: moneyForRecords(cashReceived, selectedPayments.length, 'No recorded customer payments'), sub: 'Recorded customer payments', comparison: previous ? comparePeriod(cashReceived, priorCashReceived, selectedPayments.length, priorPayments.length) : 'Comparison unavailable for All time' },
+    { icon: ReceiptText, label: 'Outstanding balances', value: outstandingUnavailable, sub: 'Stored sales balance field' },
+    { icon: CarFront, label: 'Vehicles in inventory', value: String(currentInventory.length), sub: 'Current snapshot' },
+  ];
+  const additionalKpis = [
+    { icon: PackageCheck, label: 'Vehicles sold', value: String(completedSales.length), sub: periodLabel, comparison: previous ? comparePeriod(completedSales.length, priorCompletedSales.length, completedSales.length, priorCompletedSales.length, false) : 'Comparison unavailable for All time' },
+    { icon: CircleDollarSign, label: 'Net profit', value: profitStatus, sub: 'Approved stored calculations only' },
+    { icon: CarFront, label: 'Available for sale', value: String(availableVehicles.length), sub: 'Current snapshot' },
+    { icon: PackageCheck, label: 'Reserved', value: String(reservedVehicles.length), sub: 'Current snapshot' },
+    { icon: Wallet, label: 'Purchase capital acquired', value: purchaseDatesMissing ? 'Not available — a purchase date is missing' : missingPurchasePrices ? 'Not available — a purchase price is missing' : moneyForRecords(purchaseSpend, purchaseRecords.length, 'No recorded purchases'), sub: 'Recorded purchase value' },
+    { icon: HandCoins, label: 'Capital tied in unsold vehicles', value: currentInventory.length === 0 ? 'No unsold inventory' : missingUnsoldPrices ? 'Not available — a purchase price is missing' : money(currentUnsoldPurchaseValue), sub: 'Current purchase-price value' },
+    { icon: CircleDollarSign, label: 'Gross profit', value: 'Not yet available', sub: 'No defined gross-profit field' },
   ];
   const priorComparison = previous
     ? `Previous period: ${moneyForRecords(priorRevenue, priorCompletedSales.length, 'No recorded sales')} revenue · ${priorCompletedSales.length} completed sales · ${moneyForRecords(priorCashReceived, priorPayments.length, 'No recorded customer payments')}`
@@ -674,29 +694,74 @@ export default function ExecutiveDashboard({ profile }: { profile: UserProfile }
     <div className="page-shell executive-dashboard">
       <DashboardHeader profile={profile} preset={preset} setPreset={setPreset} customStart={customStart} setCustomStart={setCustomStart} customEnd={customEnd} setCustomEnd={setCustomEnd} loading={loading} refresh={refreshDashboard} periodLabel={periodLabel} liveStatus={liveStatus} lastUpdatedAt={lastUpdatedAt} />
       {error && <p role="alert" className="auth-feedback error">{error}</p>}
-      <div className="executive-kpi-grid">
-        {kpis.map((item) => <KpiCard key={item.label} label={item.label} value={item.value} sub={item.sub} loading={loading} />)}
+      <div className="executive-kpi-grid executive-primary-kpis">
+        {dashboardKpis.map((item) => <KpiCard key={item.label} {...item} loading={loading} />)}
       </div>
-      <p className="executive-data-note">Cash received uses sale payment records. Outstanding uses the stored sales balance and is not reconciled against payment rows because the schema does not define whether advances are duplicated in those rows. Purchase capital acquired is recorded vehicle purchase value, not profit or additional funding. Current inventory and tied-up purchase value are snapshot metrics. Profit is shown only from exactly one approved stored calculation per completed sale; gross profit has no defined source field.</p>
-      <p className="executive-period-comparison">{priorComparison}</p>
-
-      <section className="glass-panel panel-section">
-        <div className="section-head"><div><h3>Sales analytics</h3><p className="muted">Completed sale value, vehicle count, and recorded customer payments · {chartPeriodLabel}</p></div><span className="small-tag">Recorded data</span></div>
-        {loading ? <div className="dashboard-chart executive-chart-skeleton" role="status" aria-label="Loading sales analytics" /> : !revenueTrendExists ? <p className="muted chart-state">No sales or customer payment records exist in this date range.</p> : <div className="dashboard-chart"><ResponsiveContainer width="100%" height="100%"><ComposedChart data={chartData} margin={{ top: 12, right: 12, left: 8, bottom: 4 }}>
-          <CartesianGrid stroke="rgba(198, 211, 226, 0.12)" vertical={false} />
-          <XAxis dataKey="label" tick={{ fill: '#d8d0bd', fontSize: 11 }} tickLine={false} axisLine={{ stroke: 'rgba(217, 184, 108, 0.24)' }} />
-          <YAxis yAxisId="money" width={76} tick={{ fill: '#d8d0bd', fontSize: 10 }} tickLine={false} axisLine={false} tickFormatter={(value) => Number(value).toLocaleString()} />
-          <YAxis yAxisId="units" orientation="right" width={34} tick={{ fill: '#c4b58e', fontSize: 10 }} tickLine={false} axisLine={false} allowDecimals={false} />
-          <Tooltip formatter={(value, name) => [name === 'Vehicles sold' ? Number(value ?? 0) : money(Number(value ?? 0)), name]} contentStyle={{ background: '#121820', border: '1px solid rgba(217, 184, 108, 0.28)', borderRadius: 12 }} labelStyle={{ color: '#f4eddd' }} />
-          <Legend wrapperStyle={{ color: '#e7deca', fontSize: 12 }} />
-          <Area yAxisId="money" type="monotone" dataKey="revenue" name="Sales revenue" fill="rgba(217, 184, 108, 0.16)" stroke="#d9b86c" strokeWidth={2} />
-          <Bar yAxisId="money" dataKey="cash" name="Customer payments received" fill="#9d8b63" radius={[4, 4, 0, 0]} maxBarSize={24} />
-          <Line yAxisId="units" type="monotone" dataKey="units" name="Vehicles sold" stroke="#ded6c4" strokeWidth={2} dot={false} />
-        </ComposedChart></ResponsiveContainer></div>}
-        <div className="executive-sales-comparison"><strong>Average recorded completed sale price:</strong> {completedSales.length ? money(revenuePerSale) : 'Not available — no completed sales in this range.'} <span>· Previous period: {priorCompletedSales.length ? money(previousRevenuePerSale) : 'No completed sales'}</span></div>
+      <section className="glass-panel panel-section executive-main-chart">
+        <div className="executive-main-chart-heading">
+          <div>
+            <p className="eyebrow">{activeMainChart === 'sales' ? 'Showroom performance' : 'Recorded capital activity'}</p>
+            <h3>{activeMainChart === 'sales' ? 'Sales & customer payments' : 'Partner & investor funding'}</h3>
+            <p className="muted">{activeMainChart === 'sales' ? `Completed sale value and actual customer payments · ${chartPeriodLabel}` : `Recorded contributions only; funding is capital, not revenue or profit · ${chartPeriodLabel}`}</p>
+          </div>
+          <div className="executive-chart-tabs" role="group" aria-label="Choose dashboard chart">
+            <button type="button" className={activeMainChart === 'sales' ? 'active' : ''} aria-pressed={activeMainChart === 'sales'} onClick={() => setMainChart('sales')}>Sales</button>
+            <button type="button" className={activeMainChart === 'funding' ? 'active' : ''} aria-pressed={activeMainChart === 'funding'} onClick={() => setMainChart('funding')}>Funding</button>
+          </div>
+        </div>
+        <div className="executive-main-chart-stats">
+          {activeMainChart === 'sales' ? <>
+            <div><span>Sales revenue</span><strong>{moneyForRecords(totalRevenue, completedSales.length, 'No recorded sales')}</strong></div>
+            <div><span>Customer cash received</span><strong>{moneyForRecords(cashReceived, selectedPayments.length, 'No recorded payments')}</strong></div>
+            <div><span>Completed sales</span><strong>{completedSales.length.toLocaleString()}</strong></div>
+          </> : <>
+            <div><span>Partner contributions</span><strong>{moneyForRecords(chartData.reduce((sum, item) => sum + item.partnerFunding, 0), chartData.filter((item) => item.partnerFunding > 0).length, 'No recorded contributions')}</strong></div>
+            <div><span>Investor contributions</span><strong>{moneyForRecords(chartData.reduce((sum, item) => sum + item.investorFunding, 0), chartData.filter((item) => item.investorFunding > 0).length, 'No recorded contributions')}</strong></div>
+            <div><span>Total recorded funding</span><strong>{moneyForRecords(fundingTotal, chartData.filter((item) => item.partnerFunding + item.investorFunding > 0).length, 'No recorded funding')}</strong></div>
+          </>}
+        </div>
+        {loading ? <div className="executive-main-chart-canvas executive-chart-skeleton" role="status" aria-label="Loading dashboard chart" /> : (
+          activeMainChart === 'sales' ? !revenueTrendExists ? <p className="dashboard-visual-empty">No sales or customer payment records exist in this date range.</p> : (
+            <div className="executive-main-chart-canvas" role="img" aria-label={`Sales revenue and customer payments chart, ${chartPeriodLabel}`}>
+              <ResponsiveContainer width="100%" height="100%"><ComposedChart data={chartData} margin={{ top: 16, right: 12, left: 8, bottom: 4 }}>
+                <CartesianGrid stroke="rgba(220, 224, 232, 0.08)" vertical={false} />
+                <XAxis dataKey="label" tick={{ fill: '#9296a0', fontSize: 11 }} tickLine={false} axisLine={{ stroke: 'rgba(255,255,255,0.08)' }} minTickGap={20} />
+                <YAxis yAxisId="money" width={76} tick={{ fill: '#9296a0', fontSize: 10 }} tickLine={false} axisLine={false} tickFormatter={(value) => Number(value).toLocaleString()} />
+                <YAxis yAxisId="units" orientation="right" width={32} tick={{ fill: '#9296a0', fontSize: 10 }} tickLine={false} axisLine={false} allowDecimals={false} />
+                <Tooltip formatter={(value, name) => [name === 'Vehicles sold' ? Number(value ?? 0) : money(Number(value ?? 0)), name]} contentStyle={{ background: '#202127', border: '1px solid rgba(255,255,255,0.12)', borderRadius: 12, color: '#f5f5f7' }} labelStyle={{ color: '#f5f5f7' }} />
+                <Legend wrapperStyle={{ color: '#c4c6cc', fontSize: 12 }} />
+                <Area yAxisId="money" type="monotone" dataKey="revenue" name="Sales revenue" fill="rgba(157, 91, 255, 0.15)" stroke="#a855f7" strokeWidth={3} activeDot={{ r: 5, fill: '#c084fc' }} />
+                <Line yAxisId="money" type="monotone" dataKey="cash" name="Customer payments received" stroke="#258bff" strokeWidth={2.5} dot={false} activeDot={{ r: 4 }} />
+                <Line yAxisId="units" type="monotone" dataKey="units" name="Vehicles sold" stroke="#4cc89a" strokeWidth={2} dot={false} activeDot={{ r: 4 }} />
+              </ComposedChart></ResponsiveContainer>
+            </div>
+          ) : !fundingTrendExists ? <p className="dashboard-visual-empty">No funding contributions exist in this date range.</p> : (
+            <div className="executive-main-chart-canvas" role="img" aria-label={`Partner and investor contribution chart, ${chartPeriodLabel}`}>
+              <ResponsiveContainer width="100%" height="100%"><AreaChart data={chartData} margin={{ top: 16, right: 16, left: 8, bottom: 4 }}>
+                <CartesianGrid stroke="rgba(220, 224, 232, 0.08)" vertical={false} />
+                <XAxis dataKey="label" tick={{ fill: '#9296a0', fontSize: 11 }} tickLine={false} axisLine={{ stroke: 'rgba(255,255,255,0.08)' }} minTickGap={20} />
+                <YAxis width={76} tick={{ fill: '#9296a0', fontSize: 10 }} tickLine={false} axisLine={false} tickFormatter={(value) => Number(value).toLocaleString()} />
+                <Tooltip formatter={(value, name) => [money(Number(value ?? 0)), name]} contentStyle={{ background: '#202127', border: '1px solid rgba(255,255,255,0.12)', borderRadius: 12, color: '#f5f5f7' }} labelStyle={{ color: '#f5f5f7' }} />
+                <Legend wrapperStyle={{ color: '#c4c6cc', fontSize: 12 }} />
+                <Area type="monotone" dataKey="partnerFunding" name="Partner contributions" stroke="#a855f7" fill="rgba(168, 85, 247, 0.18)" strokeWidth={3} activeDot={{ r: 5 }} />
+                <Area type="monotone" dataKey="investorFunding" name="Investor contributions" stroke="#258bff" fill="rgba(37, 139, 255, 0.12)" strokeWidth={2.5} activeDot={{ r: 4 }} />
+              </AreaChart></ResponsiveContainer>
+            </div>
+          )
+        )}
+        {activeMainChart === 'sales' && <p className="executive-main-chart-footnote">Profit is shown only when supported by a unique approved calculation. {priorComparison}</p>}
       </section>
-
-      <DashboardVisualCharts data={chartData} inventory={inventoryBreakdown(currentInventory)} role={profile.role === 'partner' ? 'partner' : 'super_admin'} periodLabel={chartPeriodLabel} />
+      <DashboardVisualCharts data={chartData} inventory={inventoryBreakdown(currentInventory)} role={profile.role === 'partner' ? 'partner' : 'super_admin'} periodLabel={chartPeriodLabel} showCapitalActivity={activeMainChart !== 'funding'} />
+      <details className="executive-secondary-metrics">
+        <summary>Inventory and financial context <span>Additional recorded metrics</span></summary>
+        <div className="executive-secondary-kpi-grid">
+          {additionalKpis.map((item) => <KpiCard key={item.label} {...item} loading={loading} compact />)}
+        </div>
+      </details>
+      <details className="executive-secondary-metrics executive-data-methodology">
+        <summary>How dashboard figures are calculated <span>Definitions and data limitations</span></summary>
+        <p className="executive-data-note">Cash received uses sale payment records. Outstanding uses the stored sales balance and is not reconciled against payment rows because the schema does not define whether advances are duplicated in those rows. Purchase capital acquired is recorded vehicle purchase value, not profit or additional funding. Current inventory and tied-up purchase value are snapshot metrics. Profit is shown only from exactly one approved stored calculation per completed sale; gross profit has no defined source field. Average completed sale price: {completedSales.length ? money(revenuePerSale) : 'Not available — no completed sales in this range.'} Previous period: {priorCompletedSales.length ? money(previousRevenuePerSale) : 'No completed sales'}.</p>
+      </details>
 
       <section className="glass-panel panel-section">
         <div className="section-head"><div><h3>Inventory performance</h3><p className="muted">Current unsold showroom vehicles; age uses recorded purchase date.</p></div></div>
@@ -817,8 +882,15 @@ function DashboardHeader({
     <header className="executive-dashboard-header">
       <div><p className="eyebrow">Executive insights · {periodLabel}</p><h2>Welcome back, {profile.full_name?.trim().split(/\s+/)[0] || 'team'}</h2><div className={`dashboard-live-status ${liveStatus}`} role="status" title="Supabase table events refresh this dashboard when Realtime is enabled for the tracked tables."><i />{liveStatus === 'live' ? 'Live channel connected' : liveStatus === 'connecting' ? 'Connecting live channel…' : 'Live channel unavailable'}{lastUpdatedAt && <span>Last synced {lastUpdatedAt.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</span>}</div></div>
       <div className="executive-controls">
-        <label>Date range<select aria-label="Dashboard date range" value={preset} onChange={(event) => setPreset(event.target.value as DateRangePreset)}>
-          <option value="today">Today</option><option value="this_week">This week</option><option value="this_month">This month</option><option value="previous_month">Previous month</option><option value="last_3_months">Last 3 months</option><option value="this_year">This year</option><option value="all_time">All time</option><option value="custom">Custom range</option>
+        <div className="executive-range-tabs" role="group" aria-label="Quick date range">
+          {([
+            ['today', 'Today'],
+            ['this_week', 'Week'],
+            ['this_month', 'Month'],
+          ] as const).map(([value, label]) => <button key={value} type="button" className={preset === value ? 'active' : ''} aria-pressed={preset === value} onClick={() => setPreset(value)}>{label}</button>)}
+        </div>
+        <label className="executive-period-select">More periods<select aria-label="Dashboard date range" value={['today', 'this_week', 'this_month'].includes(preset) ? '' : preset} onChange={(event) => setPreset(event.target.value as DateRangePreset)}>
+          <option value="" disabled>More periods</option><option value="previous_month">Previous month</option><option value="last_3_months">Last 3 months</option><option value="this_year">This year</option><option value="all_time">All time</option><option value="custom">Custom range</option>
         </select></label>
         {preset === 'custom' && <><label>From<input type="date" value={customStart} onChange={(event) => setCustomStart(event.target.value)} /></label><label>To<input type="date" value={customEnd} onChange={(event) => setCustomEnd(event.target.value)} /></label></>}
         <button type="button" className="ghost-button" disabled={loading} onClick={refresh}>{loading ? 'Loading…' : 'Refresh'}</button>
@@ -827,8 +899,23 @@ function DashboardHeader({
   );
 }
 
-function KpiCard({ label, value, sub, loading }: { label: string; value: string; sub?: string; loading: boolean }) {
-  return <article className="executive-kpi glass-panel"><span>{label}</span><strong>{loading ? <span className="executive-skeleton" aria-label="Loading" /> : value}</strong>{sub && <small>{sub}</small>}</article>;
+function KpiCard({ icon: Icon, label, value, sub, comparison, loading, compact = false }: {
+  icon?: LucideIcon;
+  label: string;
+  value: string;
+  sub?: string;
+  comparison?: string;
+  loading: boolean;
+  compact?: boolean;
+}) {
+  return (
+    <article className={`executive-kpi glass-panel${compact ? ' compact' : ''}`}>
+      <div className="executive-kpi-top"><span>{label}</span>{Icon && <i className="executive-kpi-icon"><Icon size={18} aria-hidden="true" /></i>}</div>
+      <strong>{loading ? <span className="executive-skeleton" aria-label="Loading" /> : value}</strong>
+      {sub && <small>{sub}</small>}
+      {comparison && !loading && <small className="executive-kpi-comparison">{comparison}</small>}
+    </article>
+  );
 }
 
 function DashboardTable<Row extends object>({ title, columns, rows, loading, search }: { title: string; columns: TableColumn<Row>[]; rows: Row[]; loading: boolean; search: string }) {
