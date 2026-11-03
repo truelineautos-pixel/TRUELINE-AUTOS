@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Area, Bar, CartesianGrid, ComposedChart, Legend, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import DashboardVisualCharts, { type DashboardChartPoint, type InventoryChartSlice } from './DashboardVisualCharts';
 import { supabase } from '../lib/supabase';
 
 type UserRole = 'pending' | 'super_admin' | 'partner' | 'investor';
@@ -147,8 +148,12 @@ export default function ExecutiveDashboard({ profile }: { profile: UserProfile }
   const [data, setData] = useState<DashboardData>(EMPTY_DATA);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [liveStatus, setLiveStatus] = useState<'connecting' | 'live' | 'offline'>('connecting');
+  const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | null>(null);
   const [tableSearch, setTableSearch] = useState('');
   const [reportType, setReportType] = useState('sales');
+  const lastSyncAt = useRef(0);
+  const realtimeRefreshTimer = useRef<number | null>(null);
   const bounds = useMemo(() => getBounds(preset, customStart, customEnd, dashboardNow), [preset, customStart, customEnd, dashboardNow]);
   const previous = useMemo(() => previousBounds(bounds), [bounds]);
   const isInvestor = profile.role === 'investor';
@@ -156,6 +161,49 @@ export default function ExecutiveDashboard({ profile }: { profile: UserProfile }
     setDashboardNow(new Date());
     setRefresh((value) => value + 1);
   };
+
+  useEffect(() => {
+    const client = supabase;
+    if (!client || !profile.is_active || profile.role === 'pending') {
+      setLiveStatus('offline');
+      return;
+    }
+
+    setLiveStatus('connecting');
+    const relevantTables = profile.role === 'investor'
+      ? ['funding_contributions', 'profit_distributions', 'distribution_payments', 'vehicles']
+      : ['vehicles', 'sales', 'sale_payments', 'vehicle_expenses', 'general_expenses', 'funding_contributions', 'profit_calculations', 'profit_distributions', 'distribution_payments'];
+    const requestRefresh = () => {
+      if (realtimeRefreshTimer.current !== null) window.clearTimeout(realtimeRefreshTimer.current);
+      realtimeRefreshTimer.current = window.setTimeout(() => {
+        realtimeRefreshTimer.current = null;
+        setDashboardNow(new Date());
+        setRefresh((value) => value + 1);
+      }, 700);
+    };
+    let channel = client.channel(`dashboard-live-${profile.role}`);
+    for (const table of relevantTables) {
+      channel = channel.on('postgres_changes', { event: '*', schema: 'public', table }, requestRefresh);
+    }
+    channel = channel.subscribe((status) => {
+      if (status === 'SUBSCRIBED') {
+        setLiveStatus('live');
+      } else {
+        setLiveStatus(status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED' ? 'offline' : 'connecting');
+      }
+    });
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === 'visible' && Date.now() - lastSyncAt.current > 60_000) requestRefresh();
+    };
+    document.addEventListener('visibilitychange', refreshWhenVisible);
+    window.addEventListener('focus', refreshWhenVisible);
+    return () => {
+      if (realtimeRefreshTimer.current !== null) window.clearTimeout(realtimeRefreshTimer.current);
+      document.removeEventListener('visibilitychange', refreshWhenVisible);
+      window.removeEventListener('focus', refreshWhenVisible);
+      void client.removeChannel(channel);
+    };
+  }, [profile.is_active, profile.role]);
 
   useEffect(() => {
     const client = supabase;
@@ -197,7 +245,11 @@ export default function ExecutiveDashboard({ profile }: { profile: UserProfile }
               .in('id', ownVehicleIds)
               .range(from, to))
             : [];
-          if (active) setData({ ...EMPTY_DATA, vehicles: ownVehicles, investorFunding: funding, distributions, distributionPayments: payments });
+          if (active) {
+            setData({ ...EMPTY_DATA, vehicles: ownVehicles, investorFunding: funding, distributions, distributionPayments: payments });
+            lastSyncAt.current = Date.now();
+            setLastUpdatedAt(new Date(lastSyncAt.current));
+          }
           return;
         }
 
@@ -291,6 +343,8 @@ export default function ExecutiveDashboard({ profile }: { profile: UserProfile }
           investors: investorsResult?.data ?? [],
           investorFunding: [],
         });
+        lastSyncAt.current = Date.now();
+        setLastUpdatedAt(new Date(lastSyncAt.current));
       } catch (loadError) {
         if (active) setError(errorText(loadError));
       } finally {
@@ -339,45 +393,90 @@ export default function ExecutiveDashboard({ profile }: { profile: UserProfile }
   const netProfit = netIsReliable ? completedSales.reduce((sum, sale) => sum + Number(approvedBySale.get(sale.id)?.[0].net_profit), 0) : null;
 
   const chartData = useMemo(() => {
-    const first = bounds?.from ? new Date(`${bounds.from}T00:00:00`) : new Date(dashboardNow.getFullYear(), dashboardNow.getMonth() - 11, 1);
-    const last = bounds?.to ? new Date(`${bounds.to}T00:00:00`) : dashboardNow;
-    const daySpan = Math.ceil((last.getTime() - first.getTime()) / 86_400_000);
-    const daily = daySpan <= 92;
+    const first = bounds?.from
+      ? new Date(`${bounds.from}T00:00:00`)
+      : new Date(dashboardNow.getFullYear(), dashboardNow.getMonth() - 11, 1);
+    const endExclusive = bounds?.to
+      ? new Date(`${bounds.to}T00:00:00`)
+      : new Date(dashboardNow.getFullYear(), dashboardNow.getMonth(), dashboardNow.getDate() + 1);
+    const daySpan = Math.max(1, Math.ceil((endExclusive.getTime() - first.getTime()) / 86_400_000));
+    const daily = daySpan <= 62;
     const bucket = (date: string) => {
-      const parsed = new Date(`${date}T00:00:00`);
+      const parsed = new Date(`${date.slice(0, 10)}T00:00:00`);
       return daily ? localDateString(parsed) : `${parsed.getFullYear()}-${String(parsed.getMonth() + 1).padStart(2, '0')}`;
     };
-    const totals = new Map<string, { revenue: number; units: number; cash: number }>();
-    const add = (key: string) => totals.get(key) ?? { revenue: 0, units: 0, cash: 0 };
+    const totals = new Map<string, DashboardChartPoint>();
+    const add = (key: string) => totals.get(key) ?? {
+      key, label: '', revenue: 0, units: 0, cash: 0, vehicleExpenses: 0, showroomExpenses: 0,
+      partnerFunding: 0, investorFunding: 0, investorContributions: 0, investorAllocations: 0, investorPaid: 0,
+    };
+    const pointStart = daily ? new Date(first) : new Date(first.getFullYear(), first.getMonth(), 1);
+    for (const cursor = new Date(pointStart); cursor < endExclusive; daily ? cursor.setDate(cursor.getDate() + 1) : cursor.setMonth(cursor.getMonth() + 1)) {
+      const key = daily ? localDateString(cursor) : `${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, '0')}`;
+      const item = add(key);
+      item.label = daily
+        ? cursor.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+        : cursor.toLocaleDateString(undefined, { month: 'short', year: '2-digit' });
+      totals.set(key, item);
+    }
     for (const sale of selectedSales) {
       const key = bucket(sale.sale_date);
-      const item = add(key);
+      const item = totals.get(key);
+      if (!item) continue;
       if (sale.status === 'completed') {
         item.revenue += Number(sale.selling_price);
         item.units += 1;
       }
-      totals.set(key, item);
     }
     for (const payment of selectedPayments) {
       const key = bucket(payment.payment_date);
-      const item = add(key);
+      const item = totals.get(key);
+      if (!item) continue;
       item.cash += Number(payment.amount);
-      totals.set(key, item);
     }
-    return [...totals.entries()].sort(([left], [right]) => left.localeCompare(right)).map(([key, item]) => ({
-      key,
-      label: daily ? new Date(`${key}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : new Date(`${key}-01T00:00:00`).toLocaleDateString(undefined, { month: 'short', year: '2-digit' }),
-      ...item,
-    }));
-  }, [bounds, dashboardNow, selectedPayments, selectedSales]);
+    for (const expense of [...data.vehicleExpenses, ...data.generalExpenses]) {
+      if (!inRange(expense.expense_date, bounds)) continue;
+      const item = totals.get(bucket(expense.expense_date));
+      if (!item) continue;
+      if (expense.vehicle_id) item.vehicleExpenses += Number(expense.amount);
+      else item.showroomExpenses += Number(expense.amount);
+    }
+    for (const contribution of data.funding) {
+      if (!inRange(contribution.contribution_date, bounds)) continue;
+      const item = totals.get(bucket(contribution.contribution_date));
+      if (!item) continue;
+      if (contribution.partner_id) item.partnerFunding += Number(contribution.amount);
+      if (contribution.investor_id) item.investorFunding += Number(contribution.amount);
+    }
+    return [...totals.values()];
+  }, [bounds, dashboardNow, data.funding, data.generalExpenses, data.vehicleExpenses, selectedPayments, selectedSales]);
 
   const periodLabel = bounds?.from
     ? `${bounds.from} – ${bounds.to ? localDateString(new Date(new Date(`${bounds.to}T00:00:00`).getTime() - 86_400_000)) : 'present'}`
     : 'All time';
+  const chartPeriodLabel = preset === 'all_time' ? 'Last 12 months' : periodLabel;
   const investorFunding = data.investorFunding.filter((item) => inRange(item.contribution_date, bounds));
   const ownApprovedDistributions = data.distributions.filter((item) => item.recipient_type === 'investor' && item.approval_status === 'approved' && inRange(localTimestampDate(item.created_at), bounds));
+  const allOwnApprovedDistributions = data.distributions.filter((item) => item.recipient_type === 'investor' && item.approval_status === 'approved');
   const ownDistributionIds = new Set(ownApprovedDistributions.map((item) => item.id));
   const ownDistributionPayments = data.distributionPayments.filter((item) => ownDistributionIds.has(item.distribution_id));
+  const investorActivityData = useMemo(() => {
+    const points = new Map(chartData.map((item) => [item.key, { ...item, investorContributions: 0, investorAllocations: 0, investorPaid: 0 }]));
+    const daily = chartData[0]?.key.length === 10;
+    const addTo = (date: string, field: 'investorContributions' | 'investorAllocations' | 'investorPaid', amount: number) => {
+      if (!inRange(date, bounds)) return;
+      const key = daily ? date.slice(0, 10) : date.slice(0, 7);
+      const point = points.get(key);
+      if (point) point[field] += Number(amount);
+    };
+    for (const contribution of data.investorFunding) addTo(contribution.contribution_date, 'investorContributions', contribution.amount);
+    for (const distribution of allOwnApprovedDistributions) addTo(localTimestampDate(distribution.created_at), 'investorAllocations', distribution.amount);
+    const approvedIds = new Set(allOwnApprovedDistributions.map((distribution) => distribution.id));
+    for (const payment of data.distributionPayments) {
+      if (approvedIds.has(payment.distribution_id)) addTo(payment.payment_date, 'investorPaid', payment.paid_amount);
+    }
+    return [...points.values()];
+  }, [allOwnApprovedDistributions, bounds, chartData, data.distributionPayments, data.investorFunding]);
   const ownDistributed = ownApprovedDistributions.reduce((sum, item) => sum + Number(item.amount), 0);
   const ownPaid = ownDistributionPayments.reduce((sum, item) => sum + Number(item.paid_amount), 0);
   const investorVehicleIds = new Set(investorFunding.map((item) => item.vehicle_id));
@@ -388,6 +487,11 @@ export default function ExecutiveDashboard({ profile }: { profile: UserProfile }
     .filter((funding) => investorVehicles.some((vehicle) => vehicle.id === funding.vehicle_id && ['available', 'reserved', 'repair'].includes(vehicle.status)))
     .reduce((sum, item) => sum + Number(item.amount), 0);
   const investorTiedRecords = data.investorFunding.filter((funding) => investorVehicles.some((vehicle) => vehicle.id === funding.vehicle_id && ['available', 'reserved', 'repair'].includes(vehicle.status))).length;
+  const inventoryBreakdown = (vehicles: Vehicle[]): InventoryChartSlice[] => [
+    { name: 'Available', value: vehicles.filter((vehicle) => vehicle.status === 'available').length, color: '#d9b86c' },
+    { name: 'Reserved', value: vehicles.filter((vehicle) => vehicle.status === 'reserved').length, color: '#71b4d7' },
+    { name: 'Repair', value: vehicles.filter((vehicle) => vehicle.status === 'repair').length, color: '#cb806f' },
+  ].filter((item) => item.value > 0);
 
   const selectedFunding = data.funding.filter((item) => inRange(item.contribution_date, bounds));
   const partyOptions = profile.role === 'super_admin' ? [...data.partners, ...data.investors] : data.partners;
@@ -518,7 +622,7 @@ export default function ExecutiveDashboard({ profile }: { profile: UserProfile }
     ].sort((left, right) => right.date.localeCompare(left.date));
     return (
       <div className="page-shell executive-dashboard">
-        <DashboardHeader profile={profile} preset={preset} setPreset={setPreset} customStart={customStart} setCustomStart={setCustomStart} customEnd={customEnd} setCustomEnd={setCustomEnd} loading={loading} refresh={refreshDashboard} periodLabel={periodLabel} />
+        <DashboardHeader profile={profile} preset={preset} setPreset={setPreset} customStart={customStart} setCustomStart={setCustomStart} customEnd={customEnd} setCustomEnd={setCustomEnd} loading={loading} refresh={refreshDashboard} periodLabel={periodLabel} liveStatus={liveStatus} lastUpdatedAt={lastUpdatedAt} />
         {error && <p role="alert" className="auth-feedback error">{error}</p>}
         <section className="executive-kpi-grid">
           <KpiCard label="Your recorded contributions" value={moneyForRecords(investorCapital, investorFunding.length, 'No recorded contributions')} loading={loading} />
@@ -531,6 +635,7 @@ export default function ExecutiveDashboard({ profile }: { profile: UserProfile }
           <KpiCard label="Net profit" value="Not yet available" loading={false} />
         </section>
         <p className="executive-data-note">Your investor-linked funding and distributions created in the selected period only. Payments are all recorded disbursements linked to those distributions. Sale revenue, customer records, vehicle expenses, and other investors’ financial records are not accessible under this role. {periodLabel}</p>
+        <DashboardVisualCharts data={investorActivityData} inventory={inventoryBreakdown(currentInventory)} role="investor" periodLabel={chartPeriodLabel} />
         <section className="glass-panel panel-section">
           <div className="section-head"><h3>Your investor statement</h3><button type="button" className="primary-button" onClick={() => exportReport('investors')}>Export CSV</button></div>
           <DashboardTable title="Investor contributions" columns={[
@@ -567,7 +672,7 @@ export default function ExecutiveDashboard({ profile }: { profile: UserProfile }
 
   return (
     <div className="page-shell executive-dashboard">
-      <DashboardHeader profile={profile} preset={preset} setPreset={setPreset} customStart={customStart} setCustomStart={setCustomStart} customEnd={customEnd} setCustomEnd={setCustomEnd} loading={loading} refresh={refreshDashboard} periodLabel={periodLabel} />
+      <DashboardHeader profile={profile} preset={preset} setPreset={setPreset} customStart={customStart} setCustomStart={setCustomStart} customEnd={customEnd} setCustomEnd={setCustomEnd} loading={loading} refresh={refreshDashboard} periodLabel={periodLabel} liveStatus={liveStatus} lastUpdatedAt={lastUpdatedAt} />
       {error && <p role="alert" className="auth-feedback error">{error}</p>}
       <div className="executive-kpi-grid">
         {kpis.map((item) => <KpiCard key={item.label} label={item.label} value={item.value} sub={item.sub} loading={loading} />)}
@@ -576,7 +681,7 @@ export default function ExecutiveDashboard({ profile }: { profile: UserProfile }
       <p className="executive-period-comparison">{priorComparison}</p>
 
       <section className="glass-panel panel-section">
-        <div className="section-head"><div><h3>Sales analytics</h3><p className="muted">Completed sale value, vehicle count, and recorded customer payments · {periodLabel}</p></div><span className="small-tag">Recorded data</span></div>
+        <div className="section-head"><div><h3>Sales analytics</h3><p className="muted">Completed sale value, vehicle count, and recorded customer payments · {chartPeriodLabel}</p></div><span className="small-tag">Recorded data</span></div>
         {loading ? <div className="dashboard-chart executive-chart-skeleton" role="status" aria-label="Loading sales analytics" /> : !revenueTrendExists ? <p className="muted chart-state">No sales or customer payment records exist in this date range.</p> : <div className="dashboard-chart"><ResponsiveContainer width="100%" height="100%"><ComposedChart data={chartData} margin={{ top: 12, right: 12, left: 8, bottom: 4 }}>
           <CartesianGrid stroke="rgba(198, 211, 226, 0.12)" vertical={false} />
           <XAxis dataKey="label" tick={{ fill: '#d8d0bd', fontSize: 11 }} tickLine={false} axisLine={{ stroke: 'rgba(217, 184, 108, 0.24)' }} />
@@ -590,6 +695,8 @@ export default function ExecutiveDashboard({ profile }: { profile: UserProfile }
         </ComposedChart></ResponsiveContainer></div>}
         <div className="executive-sales-comparison"><strong>Average recorded completed sale price:</strong> {completedSales.length ? money(revenuePerSale) : 'Not available — no completed sales in this range.'} <span>· Previous period: {priorCompletedSales.length ? money(previousRevenuePerSale) : 'No completed sales'}</span></div>
       </section>
+
+      <DashboardVisualCharts data={chartData} inventory={inventoryBreakdown(currentInventory)} role={profile.role === 'partner' ? 'partner' : 'super_admin'} periodLabel={chartPeriodLabel} />
 
       <section className="glass-panel panel-section">
         <div className="section-head"><div><h3>Inventory performance</h3><p className="muted">Current unsold showroom vehicles; age uses recorded purchase date.</p></div></div>
@@ -691,7 +798,7 @@ function vehicleLabel(vehicle: Vehicle | undefined): string {
 }
 
 function DashboardHeader({
-  profile, preset, setPreset, customStart, setCustomStart, customEnd, setCustomEnd, loading, refresh, periodLabel,
+  profile, preset, setPreset, customStart, setCustomStart, customEnd, setCustomEnd, loading, refresh, periodLabel, liveStatus, lastUpdatedAt,
 }: {
   profile: UserProfile;
   preset: DateRangePreset;
@@ -703,10 +810,12 @@ function DashboardHeader({
   loading: boolean;
   refresh: () => void;
   periodLabel: string;
+  liveStatus: 'connecting' | 'live' | 'offline';
+  lastUpdatedAt: Date | null;
 }) {
   return (
     <header className="executive-dashboard-header">
-      <div><p className="eyebrow">Executive insights · {periodLabel}</p><h2>Welcome back, {profile.full_name?.trim().split(/\s+/)[0] || 'team'}</h2></div>
+      <div><p className="eyebrow">Executive insights · {periodLabel}</p><h2>Welcome back, {profile.full_name?.trim().split(/\s+/)[0] || 'team'}</h2><div className={`dashboard-live-status ${liveStatus}`} role="status" title="Supabase table events refresh this dashboard when Realtime is enabled for the tracked tables."><i />{liveStatus === 'live' ? 'Live channel connected' : liveStatus === 'connecting' ? 'Connecting live channel…' : 'Live channel unavailable'}{lastUpdatedAt && <span>Last synced {lastUpdatedAt.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</span>}</div></div>
       <div className="executive-controls">
         <label>Date range<select aria-label="Dashboard date range" value={preset} onChange={(event) => setPreset(event.target.value as DateRangePreset)}>
           <option value="today">Today</option><option value="this_week">This week</option><option value="this_month">This month</option><option value="previous_month">Previous month</option><option value="last_3_months">Last 3 months</option><option value="this_year">This year</option><option value="all_time">All time</option><option value="custom">Custom range</option>

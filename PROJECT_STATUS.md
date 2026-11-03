@@ -142,3 +142,11 @@
 - Existing limitations remain: Stage 3 does not support mixed or third-party funding or atomic financial posting. Investor-associated sale details are unavailable under current investor row permissions. Historical balances/statuses cannot be reconstructed, and large exports are held in browser memory after paginated reads.
 - No migration, RLS policy, production record, or financial calculation was changed. The `jspdf` and `jspdf-autotable` packages were added; their code is loaded only when exporting a PDF.
 - Verification: `npm run build` passes. `npm run lint` exits successfully with React effect warnings in existing pages and the report data-loading effects. Focused CSV escaping and date-boundary checks pass; `git diff --check` passes. No live Supabase writes were performed. Local smoke testing showed the authenticated Reports route with all 14 report options; partner/investor account behavior and PDF generation with long live records remain unverified.
+
+## Dashboard visual charts and live refresh
+
+- Expanded the executive dashboard with responsive sales, vehicle/showroom expense, unsold inventory status, and capital activity charts. Investor views show only their own investment activity and funded vehicle portfolio; shared showroom roles see the contribution totals allowed by their existing RLS.
+- Chart date ranges now display complete daily/monthly buckets, and All time uses a clearly labeled last-12-month chart window. Sales revenue, customer payments, expenses, and capital remain separate measures.
+- Added Supabase Realtime listeners for authorized dashboard source tables, debounced refreshes when records change, a live-channel/last-sync indicator, and a visibility-based refresh fallback. Realtime events only trigger a fresh RLS-scoped read; event payloads are not rendered or retained.
+- Live table events depend on the tables being enabled for Supabase Realtime. If unavailable, the dashboard indicates the channel is offline and retains manual refresh. No schema/RLS migration or production data change was made.
+- Verification: production build and lint pass (lint reports existing and newly added React state-in-effect warnings); final visual testing with authenticated role accounts is pending.
