@@ -81,6 +81,7 @@
 - The app has no public sign-up form and protects application routes behind a Supabase session and active profile. No database or financial writes were performed.
 - Follow the updated README to create the separate Pages project, add build variables directly in Cloudflare, and verify the resulting public URL before calling deployment complete. Supabase URL settings and database records were not modified.
 - Source-publishing request: Git 2.56.0 for Windows initialized this project on `main`. Commit `f9511f4` (`Initial TrueLine Autos project`) was pushed to `https://github.com/truelineautos-pixel/TRUELINE-AUTOS`; GitHub confirmed the root, `src`, and all six migration files are present, and the remote branch hash matched the local commit. The `.gitignore` excludes `.env.local`, `.env`, other `.env.*` files except the safe `.env.example`, common private-key/certificate, credentials, and secrets filenames. `.env.local` was neither tracked nor staged. A source/docs/config scan found no common service-role key, private-key, or token patterns; `.env.local` was not opened. No deployment was attempted.
+- Deployment update (2026-11-03): Cloudflare Pages project `trueline-autos` is connected to this repository with automatic production deployments from `main`. Commit `7b91ddc` (`Improve mobile dashboard experience`) deployed successfully; `https://trueline-autos.pages.dev/` was verified serving the matching production build. The separate `trueline-autos` Worker was left unchanged.
 
 ## Premium UI and responsive improvement plan
 
