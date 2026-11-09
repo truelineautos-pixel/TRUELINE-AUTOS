@@ -61,6 +61,11 @@ export default defineConfig({
               test: /node_modules[\\/]@supabase[\\/]/,
               priority: 5,
             },
+            {
+              name: 'motion-vendor',
+              test: /node_modules[\\/](motion|framer-motion|motion-dom|motion-utils)[\\/]/,
+              priority: 6,
+            },
           ],
         },
       },

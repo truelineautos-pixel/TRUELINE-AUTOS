@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { Area, AreaChart, CartesianGrid, ComposedChart, Legend, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import type { LucideIcon } from 'lucide-react';
 import { CarFront, CircleDollarSign, CreditCard, HandCoins, PackageCheck, ReceiptText, TrendingUp, Wallet } from 'lucide-react';
+import { motion, useReducedMotion } from 'motion/react';
 import DashboardVisualCharts, { type DashboardChartPoint, type InventoryChartSlice } from './DashboardVisualCharts';
 import { supabase } from '../lib/supabase';
 
@@ -45,6 +46,16 @@ type DashboardData = {
   investorFunding: Funding[];
 };
 type TableColumn<Row> = { title: string; value: (row: Row) => React.ReactNode };
+type ActivityKind = 'purchase' | 'sale' | 'payment' | 'expense' | 'funding' | 'distribution';
+type ActivityItem = {
+  id: string;
+  date: string;
+  kind: ActivityKind;
+  title: string;
+  detail: string;
+  amount: number | null;
+  vehicleId: string | null;
+};
 
 const EMPTY_DATA: DashboardData = {
   vehicles: [], sales: [], payments: [], vehicleExpenses: [], generalExpenses: [], funding: [],
@@ -151,12 +162,15 @@ function downloadCsv(fileName: string, rows: string[][]): void {
 }
 
 export default function ExecutiveDashboard({ profile }: { profile: UserProfile }) {
+  const reducedMotion = useReducedMotion();
+  const animateCharts = reducedMotion === false;
   const [preset, setPreset] = useState<DateRangePreset>('this_month');
   const [customStart, setCustomStart] = useState(defaultStart);
   const [customEnd, setCustomEnd] = useState(defaultEnd);
   const [dashboardNow, setDashboardNow] = useState(() => new Date());
   const [refresh, setRefresh] = useState(0);
   const [data, setData] = useState<DashboardData>(EMPTY_DATA);
+  const [currentPartnerId, setCurrentPartnerId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [liveStatus, setLiveStatus] = useState<'connecting' | 'live' | 'offline'>('connecting');
@@ -326,9 +340,18 @@ export default function ExecutiveDashboard({ profile }: { profile: UserProfile }
           baseQueries.push(Promise.resolve(client.from('partners').select('id, name, status').order('name')));
         }
 
-        const results = await Promise.all(baseQueries);
+        const [results, partnerIdResult] = await Promise.all([
+          Promise.all(baseQueries),
+          profile.role === 'partner'
+            ? client.rpc('current_partner_id')
+            : Promise.resolve({ data: null, error: null }),
+        ]);
         const queryError = results.find((result) => typeof result === 'object' && result !== null && 'error' in result && (result as { error?: unknown }).error);
         if (queryError) throw new Error(errorText((queryError as { error: unknown }).error));
+        if (partnerIdResult.error) throw new Error(errorText(partnerIdResult.error));
+        if (profile.role === 'partner' && !partnerIdResult.data) {
+          throw new Error('Your active partner profile could not be verified.');
+        }
         if (!active) return;
         const vehicles = results[0] as Vehicle[];
         const sales = results[1] as Sale[];
@@ -355,6 +378,7 @@ export default function ExecutiveDashboard({ profile }: { profile: UserProfile }
           investors: investorsResult?.data ?? [],
           investorFunding: [],
         });
+        setCurrentPartnerId(partnerIdResult.data);
         lastSyncAt.current = Date.now();
         setLastUpdatedAt(new Date(lastSyncAt.current));
       } catch (loadError) {
@@ -500,11 +524,12 @@ export default function ExecutiveDashboard({ profile }: { profile: UserProfile }
     .reduce((sum, item) => sum + Number(item.amount), 0);
   const investorTiedRecords = data.investorFunding.filter((funding) => investorVehicles.some((vehicle) => vehicle.id === funding.vehicle_id && ['available', 'reserved', 'repair'].includes(vehicle.status))).length;
   const inventoryBreakdown = (vehicles: Vehicle[]): InventoryChartSlice[] => [
-    { name: 'Available', value: vehicles.filter((vehicle) => vehicle.status === 'available').length, color: '#a855f7' },
-    { name: 'Reserved', value: vehicles.filter((vehicle) => vehicle.status === 'reserved').length, color: '#258bff' },
-    { name: 'Repair', value: vehicles.filter((vehicle) => vehicle.status === 'repair').length, color: '#f0a267' },
+    { name: 'Available', value: vehicles.filter((vehicle) => vehicle.status === 'available').length, color: '#d5be8b' },
+    { name: 'Reserved', value: vehicles.filter((vehicle) => vehicle.status === 'reserved').length, color: '#91adba' },
+    { name: 'Repair', value: vehicles.filter((vehicle) => vehicle.status === 'repair').length, color: '#bd8d6f' },
   ].filter((item) => item.value > 0);
 
+  const allVehiclesById = new Map(data.vehicles.map((vehicle) => [vehicle.id, vehicle]));
   const selectedFunding = data.funding.filter((item) => inRange(item.contribution_date, bounds));
   const partyOptions = profile.role === 'super_admin' ? [...data.partners, ...data.investors] : data.partners;
   const partnerStats = data.partners.map((partner) => {
@@ -521,6 +546,47 @@ export default function ExecutiveDashboard({ profile }: { profile: UserProfile }
     const allocated = allocations.reduce((sum, item) => sum + Number(item.amount), 0);
     return { ...partner, vehiclesFunded: lifetimeFundedIds.size, contributed: contributions.reduce((sum, item) => sum + Number(item.amount), 0), contributionCount: contributions.length, tiedCapital, associatedRevenue, associatedSaleCount: associatedSales.length, allocated, allocationCount: allocations.length, paid, paymentCount: payments.length, payable: allocated - paid };
   });
+  const currentPartner = partnerStats.find((partner) => partner.id === currentPartnerId);
+  const partnerOwnFunding = data.funding.filter((item) => item.partner_id === currentPartnerId && inRange(item.contribution_date, bounds));
+  const partnerOwnAllocations = data.distributions.filter((item) =>
+    item.recipient_type === 'partner'
+    && item.recipient_id === currentPartnerId
+    && item.approval_status === 'approved'
+    && inRange(localTimestampDate(item.created_at), bounds),
+  );
+  const partnerOwnAllocationIds = new Set(partnerOwnAllocations.map((item) => item.id));
+  const partnerOwnPayments = data.distributionPayments.filter((item) =>
+    partnerOwnAllocationIds.has(item.distribution_id),
+  );
+  const partnerOwnRows = [
+    ...partnerOwnFunding.map((item) => ({
+      id: `partner-funding-${item.id}`,
+      date: item.contribution_date,
+      record: 'Contribution',
+      vehicle: vehicleLabel(allVehiclesById.get(item.vehicle_id)),
+      amount: Number(item.amount),
+      status: 'Recorded',
+    })),
+    ...partnerOwnAllocations.map((item) => ({
+      id: `partner-allocation-${item.id}`,
+      date: localTimestampDate(item.created_at),
+      record: 'Approved profit',
+      vehicle: vehicleLabel(allVehiclesById.get(item.vehicle_id)),
+      amount: Number(item.amount),
+      status: 'Approved',
+    })),
+    ...partnerOwnPayments.map((item) => {
+      const distribution = partnerOwnAllocations.find((allocation) => allocation.id === item.distribution_id);
+      return {
+        id: `partner-payment-${item.id}`,
+        date: item.payment_date,
+        record: 'Profit payment',
+        vehicle: vehicleLabel(allVehiclesById.get(distribution?.vehicle_id ?? '')),
+        amount: Number(item.paid_amount),
+        status: 'Paid',
+      };
+    }),
+  ].sort((left, right) => right.date.localeCompare(left.date));
   const investorStats = data.investors.map((investor) => {
     const contributions = selectedFunding.filter((item) => item.investor_id === investor.id);
     const lifetimeFundedIds = new Set(data.funding.filter((item) => item.investor_id === investor.id).map((item) => item.vehicle_id));
@@ -551,7 +617,6 @@ export default function ExecutiveDashboard({ profile }: { profile: UserProfile }
   const inventoryRows = currentInventory.filter((vehicle) => !inventorySearch || `${vehicle.make} ${vehicle.model} ${vehicle.registration_number ?? ''}`.toLowerCase().includes(inventorySearch));
   const pageSize = 8;
   const currentInventoryRows = inventoryRows.slice(inventoryPage * pageSize, (inventoryPage + 1) * pageSize);
-  const allVehiclesById = new Map(data.vehicles.map((vehicle) => [vehicle.id, vehicle]));
   const salesById = new Map(data.sales.map((sale) => [sale.id, sale]));
   const expenseRows = selectedExpensesFor(data, bounds, allVehiclesById);
   const recentPurchases = data.vehicles.filter((vehicle) => vehicle.purchase_date && inRange(vehicle.purchase_date, bounds)).sort((a, b) => (b.purchase_date ?? '').localeCompare(a.purchase_date ?? ''));
@@ -560,6 +625,65 @@ export default function ExecutiveDashboard({ profile }: { profile: UserProfile }
   const recentOutstanding = selectedOutstanding.slice().sort((a, b) => Number(b.remaining_balance) - Number(a.remaining_balance));
   const recentExpenses = expenseRows.sort((a, b) => b.date.localeCompare(a.date));
   const recentDistributions = data.distributions.filter((item) => item.approval_status === 'approved' && inRange(localTimestampDate(item.created_at), bounds)).sort((a, b) => b.created_at.localeCompare(a.created_at));
+  const recentActivity: ActivityItem[] = [
+    ...recentPurchases.slice(0, 6).map((vehicle) => ({
+      id: `purchase-${vehicle.id}`,
+      date: vehicle.purchase_date ?? '',
+      kind: 'purchase' as const,
+      title: 'Vehicle purchased',
+      detail: vehicleLabel(vehicle),
+      amount: vehicle.purchase_price,
+      vehicleId: vehicle.id,
+    })),
+    ...recentSales.slice(0, 6).map((sale) => ({
+      id: `sale-${sale.id}`,
+      date: sale.sale_date,
+      kind: 'sale' as const,
+      title: 'Vehicle sold',
+      detail: [sale.customer_name, vehicleLabel(allVehiclesById.get(sale.vehicle_id))].filter(Boolean).join(' · '),
+      amount: Number(sale.selling_price),
+      vehicleId: sale.vehicle_id,
+    })),
+    ...recentPayments.slice(0, 6).map((payment) => {
+      const sale = salesById.get(payment.sale_id);
+      return {
+        id: `payment-${payment.id}`,
+        date: payment.payment_date,
+        kind: 'payment' as const,
+        title: 'Customer payment recorded',
+        detail: sale ? vehicleLabel(allVehiclesById.get(sale.vehicle_id)) : 'Customer payment',
+        amount: Number(payment.amount),
+        vehicleId: sale?.vehicle_id ?? null,
+      };
+    }),
+    ...recentExpenses.slice(0, 6).map((expense) => ({
+      id: `expense-${expense.id}`,
+      date: expense.date,
+      kind: 'expense' as const,
+      title: expense.vehicleId ? 'Vehicle expense recorded' : 'Showroom expense recorded',
+      detail: expense.vehicleId ? `${expense.vehicle} · ${expense.type}` : expense.type,
+      amount: Number(expense.amount),
+      vehicleId: expense.vehicleId,
+    })),
+    ...selectedFunding.slice().sort((a, b) => b.contribution_date.localeCompare(a.contribution_date)).slice(0, 6).map((funding) => ({
+      id: `funding-${funding.id}`,
+      date: funding.contribution_date,
+      kind: 'funding' as const,
+      title: funding.partner_id ? 'Partner contribution recorded' : funding.investor_id ? 'Investor contribution recorded' : 'Contribution recorded',
+      detail: vehicleLabel(allVehiclesById.get(funding.vehicle_id)),
+      amount: Number(funding.amount),
+      vehicleId: funding.vehicle_id,
+    })),
+    ...recentDistributions.slice(0, 6).map((distribution) => ({
+      id: `distribution-${distribution.id}`,
+      date: localTimestampDate(distribution.created_at),
+      kind: 'distribution' as const,
+      title: 'Profit distribution approved',
+      detail: `${distribution.recipient_type === 'partner' ? 'Partner' : 'Investor'} · ${distribution.rule_name}`,
+      amount: Number(distribution.amount),
+      vehicleId: distribution.vehicle_id,
+    })),
+  ].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 6);
 
   const exportReport = (requestedReport = reportType) => {
     const filterParty = (partyId: string | null) => !partyFilterValue || partyId === partyFilterValue;
@@ -637,17 +761,30 @@ export default function ExecutiveDashboard({ profile }: { profile: UserProfile }
         <DashboardHeader profile={profile} preset={preset} setPreset={setPreset} customStart={customStart} setCustomStart={setCustomStart} customEnd={customEnd} setCustomEnd={setCustomEnd} loading={loading} refresh={refreshDashboard} periodLabel={periodLabel} liveStatus={liveStatus} lastUpdatedAt={lastUpdatedAt} />
         {error && <p role="alert" className="auth-feedback error">{error}</p>}
         <section className="executive-kpi-grid executive-primary-kpis">
-          <KpiCard icon={Wallet} label="Your contributions" value={moneyForRecords(investorCapital, investorFunding.length, 'No recorded contributions')} loading={loading} />
-          <KpiCard icon={CarFront} label="Vehicles funded" value={String(investorVehicleIds.size)} loading={loading} />
-          <KpiCard icon={CircleDollarSign} label="Approved profit allocated" value={moneyForRecords(ownDistributed, ownApprovedDistributions.length, 'Not yet available')} loading={loading} />
-          <KpiCard icon={HandCoins} label="Profit payable" value={moneyForRecords(ownDistributed - ownPaid, ownApprovedDistributions.length, 'Not yet available')} loading={loading} />
+          <KpiCard icon={Wallet} label="Your contributions" value={moneyForRecords(investorCapital, investorFunding.length, 'No recorded contributions')} loading={loading} index={0} />
+          <KpiCard icon={CarFront} label="Vehicles funded" value={String(investorVehicleIds.size)} loading={loading} index={1} />
+          <KpiCard icon={CircleDollarSign} label="Approved profit allocated" value={moneyForRecords(ownDistributed, ownApprovedDistributions.length, 'Not yet available')} loading={loading} index={2} />
+          <KpiCard icon={HandCoins} label="Profit payable" value={moneyForRecords(ownDistributed - ownPaid, ownApprovedDistributions.length, 'Not yet available')} loading={loading} index={3} />
         </section>
         <DashboardVisualCharts data={investorActivityData} inventory={inventoryBreakdown(currentInventory)} role="investor" periodLabel={chartPeriodLabel} />
+        <ActivityFeed
+          items={ownRows.map((item) => ({
+            id: item.id,
+            date: item.date,
+            kind: item.type === 'Contribution' ? 'funding' : item.type === 'Distribution payment' ? 'payment' : 'distribution',
+            title: item.type,
+            detail: item.status,
+            amount: item.amount,
+            vehicleId: item.vehicleId,
+          }))}
+          loading={loading}
+          error={error}
+        />
         <details className="executive-secondary-metrics">
           <summary>Your investment details <span>Additional recorded metrics</span></summary>
           <div className="executive-secondary-kpi-grid">
-            <KpiCard icon={CreditCard} label="Profit paid" value={moneyForRecords(ownPaid, ownDistributionPayments.length, 'No recorded payments')} loading={loading} compact />
-            <KpiCard icon={PackageCheck} label="Capital tied in unsold vehicles" value={moneyForRecords(investorTiedCapital, investorTiedRecords, 'No recorded capital tied in unsold vehicles')} loading={loading} compact />
+            <KpiCard icon={CreditCard} label="Profit paid" value={moneyForRecords(ownPaid, ownDistributionPayments.length, 'No recorded payments')} loading={loading} compact index={0} />
+            <KpiCard icon={PackageCheck} label="Capital tied in unsold vehicles" value={moneyForRecords(investorTiedCapital, investorTiedRecords, 'No recorded capital tied in unsold vehicles')} loading={loading} compact index={1} />
           </div>
           <p className="executive-data-note">Your investor-linked funding and distributions created in the selected period only. Payments are recorded disbursements linked to your distributions. Sale revenue, customer records, vehicle expenses, and other investors’ financial records are not accessible under this role. {periodLabel}</p>
         </details>
@@ -695,7 +832,7 @@ export default function ExecutiveDashboard({ profile }: { profile: UserProfile }
       <DashboardHeader profile={profile} preset={preset} setPreset={setPreset} customStart={customStart} setCustomStart={setCustomStart} customEnd={customEnd} setCustomEnd={setCustomEnd} loading={loading} refresh={refreshDashboard} periodLabel={periodLabel} liveStatus={liveStatus} lastUpdatedAt={lastUpdatedAt} />
       {error && <p role="alert" className="auth-feedback error">{error}</p>}
       <div className="executive-kpi-grid executive-primary-kpis">
-        {dashboardKpis.map((item) => <KpiCard key={item.label} {...item} loading={loading} />)}
+        {dashboardKpis.map((item, index) => <KpiCard key={item.label} {...item} loading={loading} index={index} />)}
       </div>
       <section className="glass-panel panel-section executive-main-chart">
         <div className="executive-main-chart-heading">
@@ -730,9 +867,9 @@ export default function ExecutiveDashboard({ profile }: { profile: UserProfile }
                 <YAxis yAxisId="units" orientation="right" width={32} tick={{ fill: '#9296a0', fontSize: 10 }} tickLine={false} axisLine={false} allowDecimals={false} />
                 <Tooltip formatter={(value, name) => [name === 'Vehicles sold' ? Number(value ?? 0) : money(Number(value ?? 0)), name]} contentStyle={{ background: '#202127', border: '1px solid rgba(255,255,255,0.12)', borderRadius: 12, color: '#f5f5f7' }} labelStyle={{ color: '#f5f5f7' }} />
                 <Legend wrapperStyle={{ color: '#c4c6cc', fontSize: 12 }} />
-                <Area yAxisId="money" type="monotone" dataKey="revenue" name="Sales revenue" fill="rgba(157, 91, 255, 0.15)" stroke="#a855f7" strokeWidth={3} activeDot={{ r: 5, fill: '#c084fc' }} />
-                <Line yAxisId="money" type="monotone" dataKey="cash" name="Customer payments received" stroke="#258bff" strokeWidth={2.5} dot={false} activeDot={{ r: 4 }} />
-                <Line yAxisId="units" type="monotone" dataKey="units" name="Vehicles sold" stroke="#4cc89a" strokeWidth={2} dot={false} activeDot={{ r: 4 }} />
+                <Area yAxisId="money" type="monotone" dataKey="revenue" name="Sales revenue" fill="rgba(213, 190, 139, 0.15)" stroke="#d5be8b" strokeWidth={3} activeDot={{ r: 5, fill: '#e5d4ad' }} isAnimationActive={animateCharts} />
+                <Line yAxisId="money" type="monotone" dataKey="cash" name="Customer payments received" stroke="#91adba" strokeWidth={2.5} dot={false} activeDot={{ r: 4 }} isAnimationActive={animateCharts} />
+                <Line yAxisId="units" type="monotone" dataKey="units" name="Vehicles sold" stroke="#83b49f" strokeWidth={2} dot={false} activeDot={{ r: 4 }} isAnimationActive={animateCharts} />
               </ComposedChart></ResponsiveContainer>
             </div>
           ) : !fundingTrendExists ? <p className="dashboard-visual-empty">No funding contributions exist in this date range.</p> : (
@@ -743,8 +880,8 @@ export default function ExecutiveDashboard({ profile }: { profile: UserProfile }
                 <YAxis width={76} tick={{ fill: '#9296a0', fontSize: 10 }} tickLine={false} axisLine={false} tickFormatter={(value) => Number(value).toLocaleString()} />
                 <Tooltip formatter={(value, name) => [money(Number(value ?? 0)), name]} contentStyle={{ background: '#202127', border: '1px solid rgba(255,255,255,0.12)', borderRadius: 12, color: '#f5f5f7' }} labelStyle={{ color: '#f5f5f7' }} />
                 <Legend wrapperStyle={{ color: '#c4c6cc', fontSize: 12 }} />
-                <Area type="monotone" dataKey="partnerFunding" name="Partner contributions" stroke="#a855f7" fill="rgba(168, 85, 247, 0.18)" strokeWidth={3} activeDot={{ r: 5 }} />
-                <Area type="monotone" dataKey="investorFunding" name="Investor contributions" stroke="#258bff" fill="rgba(37, 139, 255, 0.12)" strokeWidth={2.5} activeDot={{ r: 4 }} />
+                <Area type="monotone" dataKey="partnerFunding" name="Partner contributions" stroke="#d5be8b" fill="rgba(213, 190, 139, 0.18)" strokeWidth={3} activeDot={{ r: 5 }} isAnimationActive={animateCharts} />
+                <Area type="monotone" dataKey="investorFunding" name="Investor contributions" stroke="#91adba" fill="rgba(145, 173, 186, 0.12)" strokeWidth={2.5} activeDot={{ r: 4 }} isAnimationActive={animateCharts} />
               </AreaChart></ResponsiveContainer>
             </div>
           )
@@ -752,10 +889,11 @@ export default function ExecutiveDashboard({ profile }: { profile: UserProfile }
         {activeMainChart === 'sales' && <p className="executive-main-chart-footnote">Profit is shown only when supported by a unique approved calculation. {priorComparison}</p>}
       </section>
       <DashboardVisualCharts data={chartData} inventory={inventoryBreakdown(currentInventory)} role={profile.role === 'partner' ? 'partner' : 'super_admin'} periodLabel={chartPeriodLabel} showCapitalActivity={activeMainChart !== 'funding'} />
+      <ActivityFeed items={recentActivity} loading={loading} error={error} />
       <details className="executive-secondary-metrics">
         <summary>Inventory and financial context <span>Additional recorded metrics</span></summary>
         <div className="executive-secondary-kpi-grid">
-          {additionalKpis.map((item) => <KpiCard key={item.label} {...item} loading={loading} compact />)}
+          {additionalKpis.map((item, index) => <KpiCard key={item.label} {...item} loading={loading} compact index={index} />)}
         </div>
       </details>
       <details className="executive-secondary-metrics executive-data-methodology">
@@ -773,6 +911,36 @@ export default function ExecutiveDashboard({ profile }: { profile: UserProfile }
         </tbody></table></div>
         <Pagination page={inventoryPage} pageCount={Math.max(1, Math.ceil(inventoryRows.length / pageSize))} setPage={setInventoryPage} />
       </section>
+
+      {profile.role === 'partner' && (
+          <section className="glass-panel panel-section">
+            <div className="section-head">
+              <div><h3>Your partner account</h3><p className="muted">Your contributions and approved allocations in {periodLabel}; payments shown are linked to those allocations.</p></div>
+            </div>
+            <div className="executive-kpi-grid executive-primary-kpis">
+              <KpiCard icon={Wallet} label="Your contributions" value={moneyForRecords(currentPartner?.contributed ?? 0, currentPartner?.contributionCount ?? 0, 'No recorded contributions')} loading={loading} index={0} />
+              <KpiCard icon={CarFront} label="Vehicles funded" value={String(currentPartner?.vehiclesFunded ?? 0)} loading={loading} index={1} />
+              <KpiCard icon={CircleDollarSign} label="Approved profit allocated" value={moneyForRecords(currentPartner?.allocated ?? 0, currentPartner?.allocationCount ?? 0, 'Not yet available')} loading={loading} index={2} />
+              <KpiCard icon={CreditCard} label="Profit paid" value={moneyForRecords(currentPartner?.paid ?? 0, currentPartner?.paymentCount ?? 0, 'No recorded payments')} loading={loading} index={3} />
+              <KpiCard icon={HandCoins} label="Profit payable" value={moneyForRecords(currentPartner?.payable ?? 0, currentPartner?.allocationCount ?? 0, 'Not yet available')} loading={loading} index={4} />
+            </div>
+            <details className="executive-secondary-metrics">
+              <summary>Your investment details <span>Capital tied to unsold vehicles</span></summary>
+              <div className="executive-secondary-kpi-grid">
+                <KpiCard icon={PackageCheck} label="Capital tied up" value={moneyForRecords(currentPartner?.tiedCapital ?? 0, currentPartner?.vehiclesFunded ?? 0, 'No recorded funding')} loading={loading} compact index={0} />
+                <KpiCard icon={TrendingUp} label="Associated sale revenue" value={moneyForRecords(currentPartner?.associatedRevenue ?? 0, currentPartner?.associatedSaleCount ?? 0, 'No associated sales')} loading={loading} compact index={1} />
+              </div>
+              <p className="executive-data-note">Sale revenue is associated with vehicles you funded; it is not an allocation or profit share. Contributions and approved allocations use the selected period. {periodLabel}</p>
+            </details>
+            <DashboardTable title="Your partner statement" columns={[
+              { title: 'Date', value: (item: (typeof partnerOwnRows)[number]) => item.date },
+              { title: 'Record', value: (item: (typeof partnerOwnRows)[number]) => item.record },
+              { title: 'Vehicle', value: (item: (typeof partnerOwnRows)[number]) => item.vehicle },
+              { title: 'Amount', value: (item: (typeof partnerOwnRows)[number]) => money(item.amount) },
+              { title: 'Status', value: (item: (typeof partnerOwnRows)[number]) => item.status },
+            ]} rows={partnerOwnRows} loading={loading} search="" />
+          </section>
+      )}
 
       {(profile.role === 'super_admin' || profile.role === 'partner') && (
         <section className="glass-panel panel-section">
@@ -851,11 +1019,11 @@ export default function ExecutiveDashboard({ profile }: { profile: UserProfile }
   );
 }
 
-type ExpenseRow = { vehicleId: string | null; vehicle: string; type: string; date: string; amount: number };
+type ExpenseRow = { id: string; vehicleId: string | null; vehicle: string; type: string; date: string; amount: number };
 function selectedExpensesFor(data: DashboardData, bounds: DateBounds | null, vehicles: Map<string, Vehicle>): ExpenseRow[] {
   return [...data.vehicleExpenses, ...data.generalExpenses]
     .filter((item) => inRange(item.expense_date, bounds))
-    .map((item) => ({ vehicleId: item.vehicle_id ?? null, vehicle: item.vehicle_id ? vehicleLabel(vehicles.get(item.vehicle_id)) : 'Showroom expense', type: item.expense_type ?? item.category ?? 'Expense', date: item.expense_date, amount: Number(item.amount) }));
+    .map((item) => ({ id: item.id, vehicleId: item.vehicle_id ?? null, vehicle: item.vehicle_id ? vehicleLabel(vehicles.get(item.vehicle_id)) : 'Showroom expense', type: item.expense_type ?? item.category ?? 'Expense', date: item.expense_date, amount: Number(item.amount) }));
 }
 
 function vehicleLabel(vehicle: Vehicle | undefined): string {
@@ -899,7 +1067,62 @@ function DashboardHeader({
   );
 }
 
-function KpiCard({ icon: Icon, label, value, sub, comparison, loading, compact = false }: {
+const activityIcons: Record<ActivityKind, LucideIcon> = {
+  purchase: CarFront,
+  sale: TrendingUp,
+  payment: CreditCard,
+  expense: ReceiptText,
+  funding: Wallet,
+  distribution: CircleDollarSign,
+};
+
+function ActivityFeed({ items, loading, error }: { items: ActivityItem[]; loading: boolean; error: string }) {
+  const reducedMotion = useReducedMotion();
+  return (
+    <motion.section
+      className="glass-panel executive-activity-feed"
+      aria-label="Recent activity"
+      initial={reducedMotion ? false : { opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.28, delay: 0.08, ease: 'easeOut' }}
+    >
+      <div className="executive-activity-heading">
+        <div><p className="eyebrow">From recorded showroom activity</p><h3>Recent activity</h3></div>
+        <span className="muted">{items.length ? `${items.length} latest records` : 'Selected period'}</span>
+      </div>
+      {loading ? <p className="muted executive-activity-empty" role="status">Loading recent activity…</p>
+        : error ? <p className="muted executive-activity-empty" role="alert">Recent activity is unavailable because dashboard data could not be loaded.</p>
+        : !items.length ? <p className="muted executive-activity-empty">No recorded activity in this period.</p>
+          : <ol className="executive-activity-list">
+            {items.map((item, index) => {
+              const Icon = activityIcons[item.kind];
+              const date = new Date(`${item.date.slice(0, 10)}T00:00:00`);
+              const dateLabel = Number.isNaN(date.getTime())
+                ? item.date
+                : date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+              return (
+                <motion.li
+                  key={item.id}
+                  initial={reducedMotion ? false : { opacity: 0, x: 8 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  transition={{ duration: 0.22, delay: reducedMotion ? 0 : Math.min(index * 0.035, 0.14), ease: 'easeOut' }}
+                >
+                  <span className={`executive-activity-icon activity-${item.kind}`}><Icon size={16} aria-hidden="true" /></span>
+                  <div className="executive-activity-copy">
+                    <strong>{item.title}</strong>
+                    <span>{item.vehicleId ? <Link to={`/inventory/${item.vehicleId}`}>{item.detail}</Link> : item.detail}</span>
+                  </div>
+                  <time dateTime={item.date}>{dateLabel}</time>
+                  <strong className="executive-activity-amount">{item.amount === null ? 'Not recorded' : money(item.amount)}</strong>
+                </motion.li>
+              );
+            })}
+          </ol>}
+    </motion.section>
+  );
+}
+
+function KpiCard({ icon: Icon, label, value, sub, comparison, loading, compact = false, index = 0 }: {
   icon?: LucideIcon;
   label: string;
   value: string;
@@ -907,14 +1130,22 @@ function KpiCard({ icon: Icon, label, value, sub, comparison, loading, compact =
   comparison?: string;
   loading: boolean;
   compact?: boolean;
+  index?: number;
 }) {
+  const reducedMotion = useReducedMotion();
   return (
-    <article className={`executive-kpi glass-panel${compact ? ' compact' : ''}`}>
+    <motion.article
+      className={`executive-kpi glass-panel${compact ? ' compact' : ''}`}
+      initial={reducedMotion ? false : { opacity: 0, y: 9 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.3, delay: reducedMotion ? 0 : Math.min(index * 0.045, 0.18), ease: 'easeOut' }}
+      whileHover={reducedMotion ? undefined : { y: -2 }}
+    >
       <div className="executive-kpi-top"><span>{label}</span>{Icon && <i className="executive-kpi-icon"><Icon size={18} aria-hidden="true" /></i>}</div>
       <strong>{loading ? <span className="executive-skeleton" aria-label="Loading" /> : value}</strong>
       {sub && <small>{sub}</small>}
       {comparison && !loading && <small className="executive-kpi-comparison">{comparison}</small>}
-    </article>
+    </motion.article>
   );
 }
 

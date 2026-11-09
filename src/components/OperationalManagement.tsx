@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import { supabase, supabaseConfigError } from '../lib/supabase';
 
 type Role = 'pending' | 'super_admin' | 'partner' | 'investor';
@@ -83,6 +83,7 @@ function messageOf(error: unknown): string {
 }
 
 export default function OperationalManagement({ section, profile, userId }: { section: Section; profile: Profile; userId: string }) {
+  const location = useLocation();
   const [data, setData] = useState<Data>(EMPTY);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -108,6 +109,17 @@ export default function OperationalManagement({ section, profile, userId }: { se
     : !profile.is_active || profile.role === 'pending'
       ? 'An active account is required to view operational data.'
       : '';
+  useEffect(() => {
+    if (!location.hash || loading) return;
+    const targetId = decodeURIComponent(location.hash.slice(1));
+    const frame = window.requestAnimationFrame(() => {
+      document.getElementById(targetId)?.scrollIntoView({
+        behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth',
+        block: 'start',
+      });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [loading, location.hash]);
   const refreshData = () => {
     setLoading(true);
     setRefresh((value) => value + 1);
@@ -643,18 +655,22 @@ export default function OperationalManagement({ section, profile, userId }: { se
             <button type="submit" className="primary-button" disabled={saving}>{saving ? 'Saving…' : 'Record pending sale'}</button>
           </form>
         </section>}
-        {isAdmin && data.sales.length > 0 && <section className="glass-panel panel-section operational-form-panel">
-          <h3>Record customer payment</h3>
-          <form className="operational-form" onSubmit={(event) => void addPayment(event)}>
-            <label>Sale<select required value={selectedSale} onChange={(event) => setSelectedSale(event.target.value)}><option value="">Select pending or active sale</option>{data.sales.filter((sale) => sale.status !== 'cancelled').map((sale) => <option value={sale.id} key={sale.id}>{sale.customer_name} · {vehicleName(vehicleMap.get(sale.vehicle_id))} · balance {amount(sale.remaining_balance)}</option>)}</select></label>
-            {selectedSaleRecord && <p className="operational-note">Stored outstanding balance: {amount(selectedSaleRecord.remaining_balance)}. {data.holdbacks.some((holdback) => holdback.sale_id === selectedSaleRecord.id) ? 'This sale has a holdback; use the audited release form below instead of recording a regular payment.' : 'Payment rows and advance fields are not combined because historical duplication is not defined.'}</p>}
-            <label>Payment amount<input required type="number" min="0.01" step="0.01" max={selectedSaleRecord?.remaining_balance ?? undefined} value={paymentDraft.amount} onChange={(event) => setPaymentDraft({ ...paymentDraft, amount: event.target.value })} /></label>
-            <label>Payment date<input required type="date" value={paymentDraft.date} onChange={(event) => setPaymentDraft({ ...paymentDraft, date: event.target.value })} /></label>
-            <label>Payment method<input value={paymentDraft.method} onChange={(event) => setPaymentDraft({ ...paymentDraft, method: event.target.value })} /></label>
-            <label>Reference<input value={paymentDraft.reference} onChange={(event) => setPaymentDraft({ ...paymentDraft, reference: event.target.value })} /></label>
-            <button type="submit" className="primary-button" disabled={saving || !selectedSaleRecord || data.holdbacks.some((holdback) => holdback.sale_id === selectedSaleRecord.id)}>{saving ? 'Saving…' : 'Record payment'}</button>
-          </form>
-        </section>}
+        <section id="customer-payments" className="glass-panel panel-section operational-form-panel">
+          {isAdmin && data.sales.length > 0
+            ? <>
+              <h3>Record customer payment</h3>
+              <form className="operational-form" onSubmit={(event) => void addPayment(event)}>
+                <label>Sale<select required value={selectedSale} onChange={(event) => setSelectedSale(event.target.value)}><option value="">Select pending or active sale</option>{data.sales.filter((sale) => sale.status !== 'cancelled').map((sale) => <option value={sale.id} key={sale.id}>{sale.customer_name} · {vehicleName(vehicleMap.get(sale.vehicle_id))} · balance {amount(sale.remaining_balance)}</option>)}</select></label>
+                {selectedSaleRecord && <p className="operational-note">Stored outstanding balance: {amount(selectedSaleRecord.remaining_balance)}. {data.holdbacks.some((holdback) => holdback.sale_id === selectedSaleRecord.id) ? 'This sale has a holdback; use the audited release form below instead of recording a regular payment.' : 'Payment rows and advance fields are not combined because historical duplication is not defined.'}</p>}
+                <label>Payment amount<input required type="number" min="0.01" step="0.01" max={selectedSaleRecord?.remaining_balance ?? undefined} value={paymentDraft.amount} onChange={(event) => setPaymentDraft({ ...paymentDraft, amount: event.target.value })} /></label>
+                <label>Payment date<input required type="date" value={paymentDraft.date} onChange={(event) => setPaymentDraft({ ...paymentDraft, date: event.target.value })} /></label>
+                <label>Payment method<input value={paymentDraft.method} onChange={(event) => setPaymentDraft({ ...paymentDraft, method: event.target.value })} /></label>
+                <label>Reference<input value={paymentDraft.reference} onChange={(event) => setPaymentDraft({ ...paymentDraft, reference: event.target.value })} /></label>
+                <button type="submit" className="primary-button" disabled={saving || !selectedSaleRecord || data.holdbacks.some((holdback) => holdback.sale_id === selectedSaleRecord.id)}>{saving ? 'Saving…' : 'Record payment'}</button>
+              </form>
+            </>
+            : <><h3>Customer payments</h3><p className="muted">Customer payment details are shown in sales history and the finance ledger for authorized roles.</p></>}
+        </section>
         <OperationalFilters search={search} setSearch={setSearch} from={from} setFrom={setFrom} to={to} setTo={setTo} />
         <section className="glass-panel panel-section"><h3>Sales history</h3><div className="table-scroll"><table className="data-table"><thead><tr><th>Sale date</th><th>Vehicle</th><th>Customer</th><th>Sale price</th><th>Stored balance</th><th>Recorded payment rows</th><th>Status</th>{isAdmin && <th>Update status</th>}</tr></thead><tbody>
           {salesRows.map((sale) => <tr key={sale.id}><td>{sale.sale_date}</td><td><Link to={`/inventory/${sale.vehicle_id}`}>{vehicleName(vehicleMap.get(sale.vehicle_id))}</Link></td><td>{sale.customer_name}<small className="table-subtext">{sale.customer_contact || 'No contact recorded'}</small></td><td>{amount(sale.selling_price)}</td><td>{amount(sale.remaining_balance)}</td><td>{data.salePayments.filter((payment) => payment.sale_id === sale.id).length}</td><td>{sale.status}</td>{isAdmin && <td><select aria-label={`Update status for ${sale.customer_name}`} disabled={saving || sale.status !== 'pending'} value={sale.status} onChange={(event) => void updateSaleStatus(sale, event.target.value)}><option value="pending">Pending</option><option value="completed">Completed</option><option value="cancelled">Cancelled</option></select></td>}</tr>)}
@@ -828,7 +844,7 @@ function FinanceLedger({ data, vehicles, partners, investors, isInvestor, search
       <Metric label="Recorded distributions paid" value={distributionPayments.length ? amount(outgoingDistribution) : 'No payment rows'} />
     </div>
     <p className="operational-note">These are source-specific totals, not a consolidated cash balance. Financial transaction types are displayed as recorded and are not guessed as inflows or outflows; they may overlap dedicated payment, funding, or expense tables. Loans are not sales revenue. Reserve transfers are listed separately.</p>
-    <section className="glass-panel panel-section"><h3>{isInvestor ? 'Your permitted financial transactions' : 'Recorded financial transactions'}</h3><div className="table-scroll"><table className="data-table"><thead><tr><th>Date</th><th>Type</th><th>Amount</th><th>Status</th><th>Vehicle</th><th>Person</th><th>Notes</th></tr></thead><tbody>{transactions.map((item) => <tr key={item.id}><td>{item.created_at.slice(0, 10)}</td><td>{item.transaction_type}</td><td>{item.currency} {Number(item.amount).toLocaleString()}</td><td>{item.status}</td><td>{item.related_vehicle_id ? <Link to={`/inventory/${item.related_vehicle_id}`}>{vehicleName(vehicles.get(item.related_vehicle_id))}</Link> : '—'}</td><td>{partners.get(item.related_partner_id ?? '') ?? investors.get(item.related_investor_id ?? '') ?? '—'}</td><td>{item.notes || '—'}</td></tr>)}{!loading && !transactions.length && <EmptyRow columns={7} />}</tbody></table></div></section>
+    <section id="transactions" className="glass-panel panel-section"><h3>{isInvestor ? 'Your permitted financial transactions' : 'Recorded financial transactions'}</h3><div className="table-scroll"><table className="data-table"><thead><tr><th>Date</th><th>Type</th><th>Amount</th><th>Status</th><th>Vehicle</th><th>Person</th><th>Notes</th></tr></thead><tbody>{transactions.map((item) => <tr key={item.id}><td>{item.created_at.slice(0, 10)}</td><td>{item.transaction_type}</td><td>{item.currency} {Number(item.amount).toLocaleString()}</td><td>{item.status}</td><td>{item.related_vehicle_id ? <Link to={`/inventory/${item.related_vehicle_id}`}>{vehicleName(vehicles.get(item.related_vehicle_id))}</Link> : '—'}</td><td>{partners.get(item.related_partner_id ?? '') ?? investors.get(item.related_investor_id ?? '') ?? '—'}</td><td>{item.notes || '—'}</td></tr>)}{!loading && !transactions.length && <EmptyRow columns={7} />}</tbody></table></div></section>
     {isInvestor && <>
       <section className="glass-panel panel-section"><h3>Your recorded contributions</h3><SimpleTable headers={['Date', 'Vehicle', 'Amount', 'Payment method', 'Reference']} rows={funding.map((item) => [item.contribution_date, vehicleName(vehicles.get(item.vehicle_id)), amount(item.amount), item.payment_method || 'Not recorded', item.reference_number || '—'])} loading={loading} /></section>
       <section className="glass-panel panel-section"><h3>Your recorded distribution payments</h3><SimpleTable headers={['Date', 'Vehicle', 'Amount', 'Method']} rows={distributionPayments.map((item) => {
@@ -842,7 +858,7 @@ function FinanceLedger({ data, vehicles, partners, investors, isInvestor, search
       <section className="glass-panel panel-section"><h3>Recorded expenses</h3><SimpleTable headers={['Date', 'Scope', 'Category', 'Vehicle', 'Amount', 'Payment method']} rows={[...vehicleExpenses.map((item) => [item.expense_date, 'Vehicle', item.expense_type, vehicleName(vehicles.get(item.vehicle_id)), amount(item.amount), item.payment_method || 'Not recorded']), ...generalExpenses.map((item) => [item.expense_date, 'Showroom', item.category, '—', amount(item.amount), item.payment_method || 'Not recorded'])]} loading={loading} /></section>
       <section className="glass-panel panel-section"><h3>Profit distributions paid</h3><SimpleTable headers={['Date', 'Distribution', 'Amount', 'Method']} rows={distributionPayments.map((item) => [item.payment_date, data.distributions.find((distribution) => distribution.id === item.distribution_id)?.rule_name ?? item.distribution_id, amount(item.paid_amount), item.payment_method || 'Not recorded'])} loading={loading} /></section>
       <section className="glass-panel panel-section"><h3>Reserve movements (separate transfers)</h3><SimpleTable headers={['Date', 'Type', 'Amount', 'Description']} rows={reserveTransactions.map((item) => [item.created_at.slice(0, 10), item.transaction_type, amount(item.amount), item.description || '—'])} loading={loading} /></section>
-      <section className="glass-panel panel-section"><h3>Recorded reserve balances</h3><SimpleTable headers={['Reserve', 'Stored balance']} rows={data.reserves.map((item) => [item.reserve_name, amount(item.current_balance)])} loading={loading} /></section>
+      <section id="showroom-reserve" className="glass-panel panel-section"><h3>Recorded reserve balances</h3><SimpleTable headers={['Reserve', 'Stored balance']} rows={data.reserves.map((item) => [item.reserve_name, amount(item.current_balance)])} loading={loading} /></section>
     </>}
   </>;
 }

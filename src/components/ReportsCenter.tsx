@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import type { jsPDF as JsPDFDocument } from 'jspdf';
 import { Download, FileText, RefreshCw } from 'lucide-react';
 import { supabase, supabaseConfigError } from '../lib/supabase';
@@ -89,6 +90,8 @@ function canAccessReport(id: ReportId, role: Role): boolean {
 }
 
 export default function ReportsCenter({ profile }: { profile: Profile }) {
+  const [searchParams] = useSearchParams();
+  const requestedReport = searchParams.get('report');
   const isAdmin = profile.role === 'super_admin' && profile.is_active;
   const isInvestor = profile.role === 'investor' && profile.is_active;
   const [selected, setSelected] = useState<ReportId>(profile.role === 'investor' ? 'investor' : 'sales');
@@ -876,6 +879,16 @@ export default function ReportsCenter({ profile }: { profile: Profile }) {
     setVehicleId(''); setMakeModel(''); setCategory(''); setStatus(''); setCustomer(''); setPersonSearch('');
     setExpenseCategory(''); setPaymentMethod(''); setTransactionType(''); setPage(0);
   };
+  useEffect(() => {
+    const defaultReport: ReportId = profile.role === 'investor' ? 'investor' : 'sales';
+    const targetReport = definitions.find((definition) => definition.id === requestedReport)?.id ?? defaultReport;
+    if (!canAccessReport(targetReport, profile.role)) {
+      setSelected(defaultReport);
+      return;
+    }
+    setSelected(targetReport);
+    resetFilters();
+  }, [profile.role, requestedReport]);
   const reportChoices = definitions.filter((definition) => canAccessReport(definition.id, profile.role));
   const customChoices = definitions.filter((definition) => definition.id !== 'custom' && canAccessReport(definition.id, profile.role));
   const needsVehicle = ['sales', 'inventory', 'purchases', 'payments', 'balances', 'vehicle-expenses', 'partner', 'profit', 'aging'].includes(effectiveReport);

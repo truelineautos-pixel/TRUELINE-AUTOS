@@ -4,6 +4,7 @@ import type { Session } from '@supabase/supabase-js';
 import {
   BriefcaseBusiness,
   CarFront,
+  ChevronDown,
   CircleDollarSign,
   FileText,
   HandCoins,
@@ -11,6 +12,8 @@ import {
   LogOut,
   Menu,
   PackageSearch,
+  PanelLeftClose,
+  PanelLeftOpen,
   ReceiptText,
   Search,
   Settings,
@@ -18,6 +21,7 @@ import {
   TrendingUp,
   UserRoundCheck,
   Users,
+  Wallet,
   X,
 } from 'lucide-react';
 import { supabase, supabaseConfigError } from './lib/supabase';
@@ -33,6 +37,15 @@ type NavItem = {
   label: string;
   icon: React.ComponentType<React.ComponentProps<typeof Home>>;
   path: string;
+  sectionId: string;
+};
+
+type NavSection = {
+  id: string;
+  label: string;
+  icon: React.ComponentType<React.ComponentProps<typeof Home>>;
+  path?: string;
+  items: NavItem[];
 };
 
 type BackgroundSettings = {
@@ -47,41 +60,92 @@ type Profile = {
   is_active: boolean;
 };
 
-const navSections: { label: string; items: NavItem[] }[] = [
-  { label: 'Overview', items: [{ key: 'dashboard', label: 'Dashboard', icon: Home, path: '/' }] },
+const navSections: NavSection[] = [
+  { id: 'dashboard', label: 'Dashboard', icon: Home, path: '/', items: [] },
   {
-    label: 'Showroom',
+    id: 'vehicles',
+    label: 'Vehicles',
+    icon: CarFront,
     items: [
-      { key: 'inventory', label: 'Inventory', icon: PackageSearch, path: '/inventory' },
-      { key: 'purchases', label: 'Purchase', icon: ShoppingBagIcon, path: '/purchases' },
-      { key: 'sales', label: 'Sales', icon: TrendingUp, path: '/sales' },
+      { key: 'inventory', label: 'All Vehicles', icon: PackageSearch, path: '/inventory', sectionId: 'vehicles' },
+      { key: 'inventory-add', label: 'Add Vehicle', icon: CarFront, path: '/inventory?intent=add', sectionId: 'vehicles' },
+      { key: 'inventory-available', label: 'Available Vehicles', icon: CarFront, path: '/inventory?status=ready_to_sell', sectionId: 'vehicles' },
+      { key: 'inventory-reserved', label: 'Reserved Vehicles', icon: CarFront, path: '/inventory?status=reserved', sectionId: 'vehicles' },
+      { key: 'inventory-sold', label: 'Sold Vehicles', icon: CarFront, path: '/inventory?status=sold', sectionId: 'vehicles' },
+      { key: 'purchases', label: 'Purchase Records', icon: ReceiptText, path: '/purchases', sectionId: 'vehicles' },
     ],
   },
   {
+    id: 'financial',
+    label: 'Financial Management',
+    icon: CircleDollarSign,
+    items: [
+      { key: 'sales', label: 'Sales', icon: TrendingUp, path: '/sales', sectionId: 'financial' },
+      { key: 'customer-payments', label: 'Customer Payments', icon: HandCoins, path: '/sales#customer-payments', sectionId: 'financial' },
+      { key: 'expenses', label: 'Expenses', icon: ReceiptText, path: '/expenses', sectionId: 'financial' },
+      { key: 'profit', label: 'Profit & Distribution', icon: HandCoins, path: '/profit', sectionId: 'financial' },
+      { key: 'finance', label: 'Finance Transactions', icon: CircleDollarSign, path: '/finance#transactions', sectionId: 'financial' },
+      { key: 'showroom-reserve', label: 'Showroom Reserve', icon: Wallet, path: '/finance#showroom-reserve', sectionId: 'financial' },
+    ],
+  },
+  {
+    id: 'people',
     label: 'People',
+    icon: Users,
     items: [
-      { key: 'partners', label: 'Partners', icon: Users, path: '/partners' },
-      { key: 'investors', label: 'Investors', icon: UserRoundCheck, path: '/investors' },
+      { key: 'partners', label: 'Partners', icon: Users, path: '/partners', sectionId: 'people' },
+      { key: 'investors', label: 'Investors', icon: UserRoundCheck, path: '/investors', sectionId: 'people' },
     ],
   },
   {
-    label: 'Finance',
+    id: 'reports',
+    label: 'Reports & Analytics',
+    icon: FileText,
     items: [
-      { key: 'finance', label: 'Finance', icon: CircleDollarSign, path: '/finance' },
-      { key: 'profit', label: 'Profit', icon: HandCoins, path: '/profit' },
-      { key: 'expenses', label: 'Expenses', icon: ReceiptText, path: '/expenses' },
+      { key: 'reports', label: 'Business Reports', icon: FileText, path: '/reports', sectionId: 'reports' },
+      { key: 'analytics', label: 'Executive Analytics', icon: TrendingUp, path: '/reports?report=monthly', sectionId: 'reports' },
+      { key: 'ai', label: 'AI Insights', icon: Sparkles, path: '/ai', sectionId: 'reports' },
+      { key: 'custom-reports', label: 'Custom Reports', icon: FileText, path: '/reports?report=custom', sectionId: 'reports' },
+      { key: 'partner-statements', label: 'Partner Statements', icon: Users, path: '/reports?report=partner', sectionId: 'reports' },
+      { key: 'investor-statements', label: 'Investor Statements', icon: UserRoundCheck, path: '/reports?report=investor', sectionId: 'reports' },
     ],
   },
   {
-    label: 'Insights',
+    id: 'settings',
+    label: 'Settings',
+    icon: Settings,
     items: [
-      { key: 'reports', label: 'Reports', icon: FileText, path: '/reports' },
-      { key: 'ai', label: 'AI Insights', icon: Sparkles, path: '/ai' },
-      { key: 'settings', label: 'Settings', icon: Settings, path: '/settings' },
+      { key: 'settings', label: 'Business Settings', icon: Settings, path: '/settings#business-settings', sectionId: 'settings' },
+      { key: 'user-management', label: 'User Management', icon: Users, path: '/settings#user-management', sectionId: 'settings' },
+      { key: 'appearance', label: 'Appearance & Theme', icon: Settings, path: '/settings#appearance', sectionId: 'settings' },
+      { key: 'background', label: 'Background Settings', icon: Settings, path: '/settings#background-settings', sectionId: 'settings' },
     ],
   },
 ];
 const navItems = navSections.flatMap((section) => section.items);
+
+function isNavItemVisible(key: string, role: Profile['role'] | undefined): boolean {
+  if (role === 'super_admin') return true;
+  if (role === 'partner') {
+    return !['inventory-add', 'investor-statements', 'settings', 'user-management'].includes(key);
+  }
+  if (role === 'investor') {
+    return [
+      'inventory',
+      'inventory-available',
+      'inventory-reserved',
+      'inventory-sold',
+      'profit',
+      'finance',
+      'investors',
+      'custom-reports',
+      'investor-statements',
+      'appearance',
+      'background',
+    ].includes(key);
+  }
+  return false;
+}
 
 const defaultBackground: BackgroundSettings = {
   blur: 8,
@@ -130,15 +194,33 @@ function App() {
   const [background, setBackground] = useState<BackgroundSettings>(defaultBackground);
   const [showBackgroundControls, setShowBackgroundControls] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [expandedNavSection, setExpandedNavSection] = useState<string | null>('vehicles');
   const [globalSearch, setGlobalSearch] = useState('');
   const location = useLocation();
   const navigate = useNavigate();
-  const activeKey = useMemo(
-    () => navItems.find((item) => item.path === location.pathname)?.key ?? 'dashboard',
-    [location.pathname],
-  );
+  const currentPath = `${location.pathname}${location.search}${location.hash}`;
+  const activeNavItem = navItems.find((item) => item.path === currentPath)
+    ?? navItems.find((item) => item.path.split(/[?#]/)[0] === location.pathname);
+  const activeSectionId = activeNavItem?.sectionId
+    ?? (location.pathname === '/'
+      ? 'dashboard'
+      : location.pathname.startsWith('/inventory')
+        ? 'vehicles'
+        : location.pathname === '/finance' || location.pathname === '/sales' || location.pathname === '/expenses' || location.pathname === '/profit'
+          ? 'financial'
+          : location.pathname === '/partners' || location.pathname === '/investors'
+            ? 'people'
+            : location.pathname === '/reports' || location.pathname === '/ai'
+              ? 'reports'
+              : location.pathname === '/settings' ? 'settings' : null);
+  const activeKey = activeNavItem?.key ?? (location.pathname === '/' ? 'dashboard' : '');
   const displayName = profile?.full_name?.trim() || session?.user.email || 'User';
   const initials = displayName.split(/\s+/).slice(0, 2).map((part) => part[0]).join('').toUpperCase();
+
+  useEffect(() => {
+    if (activeSectionId) setExpandedNavSection(activeSectionId);
+  }, [activeSectionId]);
 
   useEffect(() => {
     if (!mobileNavOpen) return;
@@ -308,7 +390,7 @@ function App() {
   }
 
   return (
-    <div className={`app-shell${activeKey === 'dashboard' ? ' app-shell-dashboard' : ''}`} style={appStyle}>
+    <div className={`app-shell${activeKey === 'dashboard' ? ' app-shell-dashboard' : ''}${sidebarCollapsed ? ' sidebar-collapsed' : ''}`} style={appStyle}>
       <div className="app-background" />
       {mobileNavOpen && (
         <button
@@ -319,35 +401,94 @@ function App() {
         />
       )}
 
-      <aside className={`sidebar glass-panel${mobileNavOpen ? ' sidebar-open' : ''}`} id="primary-navigation">
+      <aside className={`sidebar glass-panel${mobileNavOpen ? ' sidebar-open' : ''}`} id="primary-navigation" aria-label="Main navigation">
         <div className="brand-block">
           <div className="brand-mark">TA</div>
           <div>
             <div className="brand-name">TRUELINE AUTOS</div>
             <div className="brand-subtitle">Smart Showroom</div>
           </div>
+          <button
+            type="button"
+            className="icon-button sidebar-collapse-toggle"
+            aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            onClick={() => setSidebarCollapsed((collapsed) => !collapsed)}
+          >
+            {sidebarCollapsed ? <PanelLeftOpen size={18} /> : <PanelLeftClose size={18} />}
+          </button>
           <button type="button" className="icon-button sidebar-close" aria-label="Close navigation menu" onClick={() => setMobileNavOpen(false)}>
             <X size={18} />
           </button>
         </div>
 
         <nav className="nav-list">
-          {navSections.map((section) => (
-            <div className="nav-section" key={section.label}>
-              <p className="nav-section-label">{section.label}</p>
-              {section.items.map(({ key, label, icon: Icon, path }) => (
+          {navSections.map((section) => {
+            const visibleItems = section.items.filter((item) => isNavItemVisible(item.key, profile?.role));
+            const expanded = expandedNavSection === section.id && !sidebarCollapsed;
+            const SectionIcon = section.icon;
+            const sectionActive = activeSectionId === section.id;
+            if (section.id === 'dashboard') {
+              return (
                 <NavLink
-                  key={key}
-                  to={path}
+                  key={section.id}
+                  to={section.path ?? '/'}
                   onClick={() => setMobileNavOpen(false)}
-                  className={({ isActive }) => `nav-item ${isActive || activeKey === key ? 'active' : ''}`}
+                  aria-current={sectionActive ? 'page' : undefined}
+                  title={sidebarCollapsed ? section.label : undefined}
+                  className={`nav-section-trigger nav-dashboard-link${sectionActive ? ' active' : ''}`}
                 >
-                  <Icon size={18} />
-                  <span>{label}</span>
+                  <SectionIcon size={19} />
+                  <span>{section.label}</span>
                 </NavLink>
-              ))}
-            </div>
-          ))}
+              );
+            }
+            if (!visibleItems.length) return null;
+            return (
+              <div className={`nav-section${sectionActive ? ' section-active' : ''}`} key={section.id}>
+                <button
+                  type="button"
+                  className={`nav-section-trigger${sectionActive ? ' active' : ''}`}
+                  aria-expanded={expanded}
+                  aria-controls={`nav-submenu-${section.id}`}
+                  title={sidebarCollapsed ? section.label : undefined}
+                  onClick={() => {
+                    if (sidebarCollapsed) setSidebarCollapsed(false);
+                    setExpandedNavSection((current) => current === section.id && !sidebarCollapsed ? null : section.id);
+                  }}
+                >
+                  <SectionIcon size={19} />
+                  <span>{section.label}</span>
+                  <ChevronDown className="nav-section-chevron" size={16} aria-hidden="true" />
+                </button>
+                <div id={`nav-submenu-${section.id}`} className="nav-submenu" hidden={!expanded}>
+                  {visibleItems.map(({ key, label, icon: Icon, path }) => {
+                    const active = path === currentPath
+                      || (key === 'inventory-add' && location.pathname === '/inventory' && new URLSearchParams(location.search).get('intent') === 'add')
+                      || (!path.includes('?') && !path.includes('#') && path === location.pathname);
+                    return (
+                      <NavLink
+                        key={key}
+                        to={path}
+                        onClick={(event) => {
+                          setMobileNavOpen(false);
+                          if (key === 'inventory-add') {
+                            event.preventDefault();
+                            navigate(`/inventory?intent=add&request=${Date.now()}`);
+                          }
+                        }}
+                        aria-current={active ? 'page' : undefined}
+                        className={`nav-item${active ? ' active' : ''}`}
+                      >
+                        <Icon size={17} />
+                        <span>{label}</span>
+                      </NavLink>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })}
         </nav>
 
         <div className="sidebar-footer">
@@ -355,9 +496,9 @@ function App() {
             <span className="dot" />
             Signed in securely
           </div>
-          <button type="button" className="ghost-button" onClick={() => void handleSignOut()}>
+          <button type="button" className="ghost-button" aria-label="Log out" onClick={() => void handleSignOut()}>
             <LogOut size={18} />
-            Log out
+            <span>Log out</span>
           </button>
         </div>
       </aside>
@@ -375,6 +516,9 @@ function App() {
             >
               {mobileNavOpen ? <X size={19} /> : <Menu size={19} />}
             </button>
+            <div className="mobile-current-section" aria-live="polite">
+              {navSections.find((section) => section.id === activeSectionId)?.label ?? 'TrueLine Autos'}
+            </div>
             <div className="mobile-brand">
               <div className="brand-mark">TA</div>
               <div className="brand-name">TRUELINE AUTOS</div>
@@ -414,8 +558,8 @@ function App() {
           <Route path="/inventory/:vehicleId" element={<Suspense fallback={<div className="page-shell"><p className="muted" role="status">Loading vehicle profile...</p></div>}><VehicleProfileView profile={profile} /></Suspense>} />
           <Route path="/purchases" element={<Suspense fallback={<div className="page-shell"><p className="muted" role="status">Loading purchases...</p></div>}><OperationalManagement section="purchases" profile={profile} userId={session.user.id} /></Suspense>} />
           <Route path="/sales" element={<Suspense fallback={<div className="page-shell"><p className="muted" role="status">Loading sales...</p></div>}><OperationalManagement section="sales" profile={profile} userId={session.user.id} /></Suspense>} />
-          <Route path="/partners" element={<PartnersView />} />
-          <Route path="/investors" element={<InvestorsView />} />
+          <Route path="/partners" element={<PartnersView profile={profile} />} />
+          <Route path="/investors" element={<InvestorsView profile={profile} />} />
           <Route path="/finance" element={<Suspense fallback={<div className="page-shell"><p className="muted" role="status">Loading finance...</p></div>}><OperationalManagement section="finance" profile={profile} userId={session.user.id} /></Suspense>} />
           <Route path="/profit" element={<Suspense fallback={<div className="page-shell"><p className="muted" role="status">Loading profit records...</p></div>}><OperationalManagement section="profit" profile={profile} userId={session.user.id} /></Suspense>} />
           <Route path="/expenses" element={<Suspense fallback={<div className="page-shell"><p className="muted" role="status">Loading expenses...</p></div>}><OperationalManagement section="expenses" profile={profile} userId={session.user.id} /></Suspense>} />
@@ -423,6 +567,7 @@ function App() {
           <Route path="/ai" element={<AiView />} />
           <Route path="/settings" element={<SettingsView profile={profile} background={background} onChange={handleBackgroundChange} showControls={showBackgroundControls} setShowControls={setShowBackgroundControls} />} />
         </Routes>
+        <RouteHashScroll />
       </main>
     </div>
   );
@@ -605,7 +750,11 @@ function InventoryView({ profile, userId }: { profile: Profile; userId: string }
   const [vehiclePhotos, setVehiclePhotos] = useState<Record<string, string>>({});
   const [searchInput, setSearchInput] = useState(initialSearch);
   const [search, setSearch] = useState(initialSearch);
-  const [statusFilter, setStatusFilter] = useState('all');
+  const requestedStatus = searchParams.get('status');
+  const initialStatusFilter = requestedStatus && ['processing', 'repairing', 'ready_to_sell', 'reserved', 'sold', 'archived'].includes(requestedStatus)
+    ? requestedStatus
+    : 'all';
+  const [statusFilter, setStatusFilter] = useState(initialStatusFilter);
   const [categoryFilter, setCategoryFilter] = useState('all');
   const [fundingPartyFilter, setFundingPartyFilter] = useState('');
   const [fundingPartyOptions, setFundingPartyOptions] = useState<{ value: string; label: string }[]>([]);
@@ -693,6 +842,24 @@ function InventoryView({ profile, userId }: { profile: Profile; userId: string }
           return fundingQuery.range(from, to);
         });
         matchingVehicleIds = [...new Set(contributionRows.map((row) => row.vehicle_id))];
+        if (!matchingVehicleIds.length) {
+          setVehicles([]);
+          setVehicleCount(0);
+          return;
+        }
+      }
+      if (profile.role === 'investor') {
+        const { data: investorId, error: investorIdError } = await client.rpc('current_investor_id');
+        if (investorIdError) throw investorIdError;
+        if (!investorId) throw new Error('Your active investor profile could not be verified.');
+        const ownContributions = await fetchPagedRows<{ vehicle_id: string }>((from, to) => client.from('funding_contributions')
+          .select('vehicle_id')
+          .eq('investor_id', investorId)
+          .range(from, to));
+        const ownVehicleIds = new Set(ownContributions.map((row) => row.vehicle_id));
+        matchingVehicleIds = matchingVehicleIds
+          ? matchingVehicleIds.filter((vehicleId) => ownVehicleIds.has(vehicleId))
+          : [...ownVehicleIds];
         if (!matchingVehicleIds.length) {
           setVehicles([]);
           setVehicleCount(0);
@@ -792,7 +959,7 @@ function InventoryView({ profile, userId }: { profile: Profile; userId: string }
     } finally {
       setLoading(false);
     }
-  }, [ageFilter, categoryFilter, fundingPartyFilter, page, priceMax, priceMin, purchaseDateFrom, purchaseDateTo, search, sortBy, statusFilter]);
+  }, [ageFilter, categoryFilter, fundingPartyFilter, page, priceMax, priceMin, profile.role, purchaseDateFrom, purchaseDateTo, search, sortBy, statusFilter]);
 
   useEffect(() => {
     void loadVehicles();
@@ -811,15 +978,17 @@ function InventoryView({ profile, userId }: { profile: Profile; userId: string }
         setError(`Funding filters could not be loaded: ${formatOperationError(failure)}`);
         return;
       }
-      setFundingPartyOptions([
-        ...(partnersResult.data ?? []).map((party) => ({ value: `partner:${party.id}`, label: `Partner · ${party.name}` })),
-        ...(investorsResult.data ?? []).map((party) => ({ value: `investor:${party.id}`, label: `Investor · ${party.name}` })),
-      ]);
+      setFundingPartyOptions(profile.role === 'investor'
+        ? []
+        : [
+          ...(partnersResult.data ?? []).map((party) => ({ value: `partner:${party.id}`, label: `Partner · ${party.name}` })),
+          ...(investorsResult.data ?? []).map((party) => ({ value: `investor:${party.id}`, label: `Investor · ${party.name}` })),
+        ]);
     }).catch((loadError: unknown) => {
       if (active) setError(`Funding filters could not be loaded: ${formatOperationError(loadError)}`);
     });
     return () => { active = false; };
-  }, []);
+  }, [profile.role]);
 
   useEffect(() => {
     const timeout = window.setTimeout(() => {
@@ -924,6 +1093,12 @@ function InventoryView({ profile, userId }: { profile: Profile; userId: string }
     void loadParties();
     setFormOpen(true);
   };
+
+  useEffect(() => {
+    if (searchParams.get('intent') === 'add' && profile.role === 'super_admin') {
+      openNewVehicle();
+    }
+  }, [profile.role, searchParams]);
 
   const openEditVehicle = (vehicle: Vehicle) => {
     setEditingVehicle(vehicle);
@@ -1423,10 +1598,12 @@ function InventoryView({ profile, userId }: { profile: Profile; userId: string }
             <option value="sold">Sold</option>
             <option value="archived">Archived</option>
           </select>
-          <select aria-label="Filter by funding partner or investor" value={fundingPartyFilter} onChange={(event) => { setPage(0); setFundingPartyFilter(event.target.value); }}>
-            <option value="">All contributors</option>
-            {fundingPartyOptions.map((party) => <option key={party.value} value={party.value}>{party.label}</option>)}
-          </select>
+          {profile.role !== 'investor' && (
+            <select aria-label="Filter by funding partner or investor" value={fundingPartyFilter} onChange={(event) => { setPage(0); setFundingPartyFilter(event.target.value); }}>
+              <option value="">All contributors</option>
+              {fundingPartyOptions.map((party) => <option key={party.value} value={party.value}>{party.label}</option>)}
+            </select>
+          )}
         </div>
         <div className="inventory-filter-secondary">
           <label>Purchase from<input type="date" aria-label="Purchase date from" value={purchaseDateFrom} onChange={(event) => { setPage(0); setPurchaseDateFrom(event.target.value); }} /></label>
@@ -1635,12 +1812,83 @@ function VehicleFileLink({ file }: { file: VehicleFile }) {
   return url ? <a href={url} target="_blank" rel="noreferrer">{file.file_name}</a> : <span>{file.file_name}</span>;
 }
 
-function PartnersView() {
-  return <PagePlaceholder title="Partners" subtitle="Manage six partner profiles, funding records, and profit allocations." />;
+function PartnersView({ profile }: { profile: Profile }) {
+  return <PartyDirectory kind="partner" role={profile.role} />;
 }
 
-function InvestorsView() {
-  return <PagePlaceholder title="Investors" subtitle="Track investor portfolios, returns, links to funded vehicles, and balances." />;
+function InvestorsView({ profile }: { profile: Profile }) {
+  return <PartyDirectory kind="investor" role={profile.role} />;
+}
+
+function PartyDirectory({ kind, role }: { kind: 'partner' | 'investor'; role?: Profile['role'] }) {
+  const [parties, setParties] = useState<Party[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const label = kind === 'partner' ? 'Partners' : 'Investors';
+
+  useEffect(() => {
+    if (!supabase) {
+      setLoading(false);
+      setError(supabaseConfigError ?? 'Supabase is unavailable.');
+      return;
+    }
+    let active = true;
+    setLoading(true);
+    setError('');
+    void (async () => {
+      try {
+        const { data, error: loadError } = await supabase
+          .from(kind === 'partner' ? 'partners' : 'investors')
+          .select('id, name, status')
+          .order('name');
+        if (!active) return;
+        if (loadError) setError(formatOperationError(loadError));
+        else setParties((data ?? []) as Party[]);
+      } catch (loadError) {
+        if (active) setError(formatOperationError(loadError));
+      } finally {
+        if (active) setLoading(false);
+      }
+    })();
+    return () => { active = false; };
+  }, [kind]);
+
+  if (role === 'investor' && kind !== 'investor') {
+    return <div className="page-shell"><p className="auth-feedback error" role="alert">This directory is not available under your account permissions.</p></div>;
+  }
+
+  return (
+    <div className="page-shell">
+      <header className="page-header"><div><p className="eyebrow">People</p><h2>{label}</h2><p className="muted">Read-only directory for your current access level.</p></div></header>
+      {error && <p className="auth-feedback error" role="alert">{error}</p>}
+      <section className="glass-panel panel-section">
+        {loading ? <p className="muted" role="status">Loading {label.toLowerCase()}...</p> : (
+          <div className="table-scroll"><table className="data-table">
+            <thead><tr><th>Name</th><th>Status</th></tr></thead>
+            <tbody>{parties.map((party) => <tr key={party.id}><td>{party.name}</td><td>{party.status}</td></tr>)}</tbody>
+          </table>{!parties.length && <p className="muted">No {label.toLowerCase()} are available.</p>}</div>
+        )}
+      </section>
+    </div>
+  );
+}
+
+function RouteHashScroll() {
+  const { hash, pathname } = useLocation();
+
+  useEffect(() => {
+    if (!hash || pathname !== '/settings') return;
+    const targetId = decodeURIComponent(hash.slice(1));
+    const frame = window.requestAnimationFrame(() => {
+      document.getElementById(targetId)?.scrollIntoView({
+        behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth',
+        block: 'start',
+      });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [hash, pathname]);
+
+  return null;
 }
 
 function AiView() {
@@ -2130,18 +2378,18 @@ function SettingsView({ profile, background, onChange, showControls, setShowCont
       </div>
 
       <div className="settings-grid">
-        <div className="glass-panel panel-section">
+        <div id="business-settings" className="glass-panel panel-section">
           <h3>Business profile</h3>
           <div className="field-grid">
-            <div className="field-group"><label>Business name</label><input defaultValue="TRUELINE AUTOS" /></div>
-            <div className="field-group"><label>Currency</label><input defaultValue="PKR" /></div>
-            <div className="field-group"><label>Theme</label><input defaultValue="Luxury glass" /></div>
-            <div className="field-group"><label>Contact</label><input defaultValue="+92 300 1234567" /></div>
+            <div className="field-group"><label>Business name</label><input defaultValue="TRUELINE AUTOS" disabled={profile.role !== 'super_admin'} /></div>
+            <div className="field-group"><label>Currency</label><input defaultValue="PKR" disabled={profile.role !== 'super_admin'} /></div>
+            <div className="field-group"><label>Theme</label><input defaultValue="Luxury glass" disabled={profile.role !== 'super_admin'} /></div>
+            <div className="field-group"><label>Contact</label><input defaultValue="+92 300 1234567" disabled={profile.role !== 'super_admin'} /></div>
           </div>
         </div>
 
-        <div className="glass-panel panel-section">
-          <h3>Background customization</h3>
+        <div id="appearance" className="glass-panel panel-section">
+          <h3 id="background-settings">Appearance and background</h3>
           {showControls ? (
             <div className="slider-stack">
               <label>
@@ -2164,7 +2412,7 @@ function SettingsView({ profile, background, onChange, showControls, setShowCont
         </div>
       </div>
       {profile.role === 'super_admin' && (
-        <div className="party-management-stack">
+        <div id="user-management" className="party-management-stack">
           <InvestorManagement />
           <PartnerManagement />
         </div>
@@ -2190,10 +2438,6 @@ function PagePlaceholder({ title, subtitle }: { title: string; subtitle: string 
       </div>
     </div>
   );
-}
-
-function ShoppingBagIcon(props: React.ComponentProps<typeof CarFront>) {
-  return <CarFront {...props} />;
 }
 
 export default App;

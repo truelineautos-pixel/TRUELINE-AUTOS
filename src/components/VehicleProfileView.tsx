@@ -303,6 +303,20 @@ function ProfileFacts({ values }: { values: [string, string | number | null | un
 }
 
 async function loadProfile(client: SupabaseClient, vehicleId: string, role: UserProfile['role']): Promise<VehicleProfileData> {
+  if (role === 'investor') {
+    const { data: investorId, error: investorIdError } = await client.rpc('current_investor_id');
+    if (investorIdError) throw investorIdError;
+    if (!investorId) throw new Error('Your active investor profile could not be verified.');
+    const { data: ownFunding, error: ownFundingError } = await client
+      .from('funding_contributions')
+      .select('id')
+      .eq('vehicle_id', vehicleId)
+      .eq('investor_id', investorId)
+      .limit(1);
+    if (ownFundingError) throw ownFundingError;
+    if (!ownFunding?.length) throw new Error('This vehicle is not linked to your investment records.');
+  }
+
   const { data: vehicle, error: vehicleError } = await client
     .from('vehicles')
     .select('id, business_category, make, model, variant, manufacturing_year, registration_year, registration_city, registration_number, color, mileage, engine_capacity, transmission, fuel_type, condition, chassis_number, engine_number, status, workflow_stage, purchase_date, purchase_price, total_additional_costs, expected_sale_price, actual_sale_price, notes, customer_name, customer_contact')

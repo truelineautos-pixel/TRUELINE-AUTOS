@@ -1,4 +1,5 @@
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, Legend, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { useReducedMotion } from 'motion/react';
 
 export type DashboardChartPoint = {
   key: string;
@@ -34,6 +35,8 @@ export default function DashboardVisualCharts({
   periodLabel: string;
   showCapitalActivity?: boolean;
 }) {
+  const reducedMotion = useReducedMotion();
+  const animateCharts = reducedMotion === false;
   const inventoryTotal = inventory.reduce((sum, item) => sum + item.value, 0);
   const expenseTotal = data.reduce((sum, item) => sum + item.vehicleExpenses + item.showroomExpenses, 0);
   const fundingTotal = role === 'investor'
@@ -62,10 +65,10 @@ export default function DashboardVisualCharts({
                   <CartesianGrid stroke="rgba(198, 211, 226, 0.1)" vertical={false} />
                   <XAxis dataKey="label" tick={{ fill: '#c6d3e2', fontSize: 10 }} tickLine={false} axisLine={{ stroke: 'rgba(217, 184, 108, 0.2)' }} minTickGap={20} />
                   <YAxis width={72} tick={{ fill: '#c6d3e2', fontSize: 10 }} tickLine={false} axisLine={false} tickFormatter={(value) => Number(value).toLocaleString()} />
-                  <Tooltip formatter={(value, name) => [money(value), name]} contentStyle={{ background: '#202127', border: '1px solid rgba(255,255,255,0.12)', borderRadius: 12 }} labelStyle={{ color: '#f5f5f7' }} />
+                  <Tooltip formatter={(value, name) => [money(value), name]} contentStyle={{ background: '#101b28', border: '1px solid rgba(213,190,139,0.24)', borderRadius: 12 }} labelStyle={{ color: '#f4eee0' }} />
                   <Legend wrapperStyle={{ color: '#c4c6cc', fontSize: 11 }} />
-                  <Bar dataKey="vehicleExpenses" name="Vehicle expenses" stackId="expenses" fill="#a855f7" radius={[0, 0, 0, 0]} maxBarSize={28} isAnimationActive />
-                  <Bar dataKey="showroomExpenses" name="Showroom expenses" stackId="expenses" fill="#258bff" radius={[4, 4, 0, 0]} maxBarSize={28} isAnimationActive />
+                  <Bar dataKey="vehicleExpenses" name="Vehicle expenses" stackId="expenses" fill="#d5be8b" radius={[0, 0, 0, 0]} maxBarSize={28} isAnimationActive={animateCharts} />
+                  <Bar dataKey="showroomExpenses" name="Showroom expenses" stackId="expenses" fill="#91adba" radius={[4, 4, 0, 0]} maxBarSize={28} isAnimationActive={animateCharts} />
                 </BarChart>
               </ResponsiveContainer>
             </div>
@@ -84,10 +87,10 @@ export default function DashboardVisualCharts({
             <div className="dashboard-donut" role="img" aria-label={`${inventoryTotal} unsold vehicles by current status`}>
               <ResponsiveContainer width="100%" height="100%">
                 <PieChart>
-                  <Pie data={inventory} dataKey="value" nameKey="name" innerRadius="66%" outerRadius="88%" paddingAngle={3} stroke="none" isAnimationActive>
+                  <Pie data={inventory} dataKey="value" nameKey="name" innerRadius="66%" outerRadius="88%" paddingAngle={3} stroke="none" isAnimationActive={animateCharts}>
                     {inventory.map((item) => <Cell key={item.name} fill={item.color} />)}
                   </Pie>
-                  <Tooltip formatter={(value, name) => [`${Number(value)} vehicles`, name]} contentStyle={{ background: '#202127', border: '1px solid rgba(255,255,255,0.12)', borderRadius: 12 }} />
+                  <Tooltip formatter={(value, name) => [`${Number(value)} vehicles`, name]} contentStyle={{ background: '#101b28', border: '1px solid rgba(213,190,139,0.24)', borderRadius: 12 }} />
                   <text x="50%" y="47%" textAnchor="middle" dominantBaseline="middle" fill="#f3e5bd" fontSize="27" fontWeight="700">{inventoryTotal}</text>
                   <text x="50%" y="58%" textAnchor="middle" dominantBaseline="middle" fill="#aab9ca" fontSize="11">vehicles</text>
                 </PieChart>
@@ -115,15 +118,15 @@ export default function DashboardVisualCharts({
                 <CartesianGrid stroke="rgba(198, 211, 226, 0.1)" vertical={false} />
                 <XAxis dataKey="label" tick={{ fill: '#c6d3e2', fontSize: 10 }} tickLine={false} axisLine={{ stroke: 'rgba(217, 184, 108, 0.2)' }} minTickGap={20} />
                 <YAxis width={76} tick={{ fill: '#c6d3e2', fontSize: 10 }} tickLine={false} axisLine={false} tickFormatter={(value) => Number(value).toLocaleString()} />
-                <Tooltip formatter={(value, name) => [money(value), name]} contentStyle={{ background: '#202127', border: '1px solid rgba(255,255,255,0.12)', borderRadius: 12 }} labelStyle={{ color: '#f5f5f7' }} />
+                <Tooltip formatter={(value, name) => [money(value), name]} contentStyle={{ background: '#101b28', border: '1px solid rgba(213,190,139,0.24)', borderRadius: 12 }} labelStyle={{ color: '#f4eee0' }} />
                 <Legend wrapperStyle={{ color: '#c4c6cc', fontSize: 11 }} />
                 {role === 'investor' ? <>
-                  <Area type="monotone" dataKey="investorContributions" name="Your contributions" stroke="#a855f7" fill="rgba(168, 85, 247, 0.2)" strokeWidth={2.5} isAnimationActive />
-                  <Area type="monotone" dataKey="investorAllocations" name="Approved allocations" stroke="#258bff" fill="rgba(37, 139, 255, 0.14)" strokeWidth={2} isAnimationActive />
-                  <Area type="monotone" dataKey="investorPaid" name="Profit paid" stroke="#4cc89a" fill="rgba(76, 200, 154, 0.1)" strokeWidth={2} isAnimationActive />
+                  <Area type="monotone" dataKey="investorContributions" name="Your contributions" stroke="#d5be8b" fill="rgba(213, 190, 139, 0.2)" strokeWidth={2.5} isAnimationActive={animateCharts} />
+                  <Area type="monotone" dataKey="investorAllocations" name="Approved allocations" stroke="#91adba" fill="rgba(145, 173, 186, 0.14)" strokeWidth={2} isAnimationActive={animateCharts} />
+                  <Area type="monotone" dataKey="investorPaid" name="Profit paid" stroke="#83b49f" fill="rgba(131, 180, 159, 0.1)" strokeWidth={2} isAnimationActive={animateCharts} />
                 </> : <>
-                  <Area type="monotone" dataKey="partnerFunding" name="Partner contributions" stroke="#a855f7" fill="rgba(168, 85, 247, 0.2)" strokeWidth={2.5} isAnimationActive />
-                  <Area type="monotone" dataKey="investorFunding" name="Investor contributions" stroke="#258bff" fill="rgba(37, 139, 255, 0.14)" strokeWidth={2} isAnimationActive />
+                  <Area type="monotone" dataKey="partnerFunding" name="Partner contributions" stroke="#d5be8b" fill="rgba(213, 190, 139, 0.2)" strokeWidth={2.5} isAnimationActive={animateCharts} />
+                  <Area type="monotone" dataKey="investorFunding" name="Investor contributions" stroke="#91adba" fill="rgba(145, 173, 186, 0.14)" strokeWidth={2} isAnimationActive={animateCharts} />
                 </>}
               </AreaChart>
             </ResponsiveContainer>
